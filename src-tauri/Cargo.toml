@@ -1,6 +1,6 @@
 [package]
 name = "arduloops"
-version = "2.4.6"
+version = "2.5.0"
 description = "ArduLoops"
 authors = ["IAMPM"]
 edition = "2021"
@@ -32,7 +32,7 @@ tauri-plugin-log = { version = "2", optional = true }
 tauri-plugin-opener = { version = "2", optional = true }
 tauri-plugin-deep-link = { version = "2", optional = true }
 # direct-serial pulls the `serial` crate, whose termios 0.2 dependency does not build for Android.
-mavlink = { version = "0.13.1", default-features = false, features = ["std", "tcp", "udp", "serde", "ardupilotmega"] }
+mavlink = { version = "0.21.0", default-features = false, features = ["std", "transport-tcp", "transport-udp", "serde", "dialect-ardupilotmega", "mav2-message-extensions"] }
 ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 base64 = "0.22"
@@ -52,7 +52,7 @@ futures-util = "0.3"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "time", "net", "io-util", "sync"] }
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
-mavlink = { version = "0.13.1", default-features = false, features = ["direct-serial"] }
+mavlink = { version = "0.21.0", default-features = false, features = ["transport-direct-serial"] }
 serialport = "4.7.2"
 # Self-update from signed GitHub release artifacts. Android updates go through the APK.
 tauri-plugin-updater = { version = "2", optional = true }
