@@ -5,7 +5,7 @@
  */
 export const ASK_ASSISTANT = "arduloops:assistant-ask";
 
-export type AskDetail = { text: string; send: boolean; starters?: string[]; keep?: boolean; log?: string };
+export type AskDetail = { text: string; send: boolean; starters?: string[]; keep?: boolean; log?: string; chat?: string };
 
 export function askAssistant(text: string): void {
   window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text, send: true } }));
@@ -29,6 +29,11 @@ export function takeFocusRequest(): boolean {
 export function openAssistant(starters: string[] = [], log = ""): void {
   focusWanted = true;
   window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text: "", send: false, starters, log } }));
+}
+
+/** Opens the assistant on one stored conversation, e.g. a chat of a board opened from the database. */
+export function openAssistantChat(chat: string): void {
+  window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text: "", send: false, chat } }));
 }
 
 /** Opens the chat on the conversation already there, e.g. where an assistant card waits. */

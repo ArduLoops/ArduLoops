@@ -78,6 +78,7 @@ const STATUS_MS = 6000;
 
 function sizeLabel(bytes: number): string {
   if (bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${Math.max(1, Math.ceil(bytes / 1024))} KB`;
 }
@@ -88,11 +89,22 @@ function mbLabel(bytes: number): string {
 
 const WHEN = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
+/** Before this the clock was not set: ArduPilot without GPS time counts from 1994. */
+const CLOCK_SET_FROM = Date.UTC(2015, 0, 1);
+
 function dateOf(value: string | number | null | undefined): Date | null {
   if (!value) return null;
   const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
+  return Number.isNaN(date.getTime()) || date.getTime() < CLOCK_SET_FROM ? null : date;
 }
+
+/** SITL logs are kept apart from real boards, in `sitl-copter`, `sitl-plane` (logs.rs). */
+function sitlDir(dir: string | null | undefined): boolean {
+  return !!dir && (dir === "sitl" || dir.startsWith("sitl-"));
+}
+
+/** The board's answer for a log it lists but cannot read (see `NO_LOG_DATA` in logs.rs). */
+const NO_LOG_DATA = "The board has no data in this log";
 
 function stampDate(stamp: string | undefined): Date | null {
   const m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(stamp ?? "");
@@ -221,12 +233,14 @@ export function LogAutoDownload() {
   return null;
 }
 
-export function VehicleLogs({ active }: { active: boolean }) {
+/** `board`: a board opened from the database, not on the link. Only its copies on this computer show. */
+export function VehicleLogs({ active, board: opened }: { active: boolean; board?: string }) {
   const t = useT();
-  const link = useStorePicked(
+  const live = useStorePicked(
     (s) => ({ ok: s.ok, armed: !!s.armed, boot: s.log_dir || bootKey(s.boot_uid ?? "") }),
     (a, b) => a.ok === b.ok && a.armed === b.armed && a.boot === b.boot,
   );
+  const link = opened ? { ok: false, armed: false, boot: opened } : live;
   const texts = useStorePicked(
     (s) => s.texts ?? [],
     (a, b) => a.length === b.length && a.every((line, i) => line === b[i]),
@@ -668,6 +682,8 @@ export function VehicleLogs({ active }: { active: boolean }) {
 
   const queuedIds = new Set(queue.waiting.map((w) => w.id));
   const missing = rows.filter((row) => row.log && !row.file);
+  // A log the board lists but has no data for gives nothing to download.
+  const fetchable = missing.filter((row) => row.brief?.error !== NO_LOG_DATA);
   const groups: Record<Filter, Row[]> = {
     all: rows,
     star: rows.filter((row) => row.star),
@@ -726,7 +742,8 @@ export function VehicleLogs({ active }: { active: boolean }) {
     return () => window.removeEventListener("pointerdown", close);
   }, [menu]);
 
-  const gap = !link.ok
+  const gap = opened ? t("This board is not on the link. These are its logs on this computer.")
+    : !link.ok
     ? (board ? t("No board on the link. Copies of {board}, the last board seen.", { board: shortUid(board) }) : t("No board on the link."))
     : link.armed ? t("Armed. Downloads and erase wait until the vehicle is disarmed.") : "";
 
@@ -748,6 +765,9 @@ export function VehicleLogs({ active }: { active: boolean }) {
       return <button type="button" className="log-act ghost dim" onClick={() => void cancelDownload(row.log!.id)}>{t("Queued")}<b aria-hidden="true">×</b></button>;
     }
     if (row.file) return <button type="button" className="log-act ghost" title={t("Show in folder")} onClick={() => void reveal(row.file!.id)}>{t("Show")}</button>;
+    if (row.log && row.brief?.error === NO_LOG_DATA) {
+      return <button type="button" className="log-act ghost dim" disabled title={t(NO_LOG_DATA)}>{t("Empty")}</button>;
+    }
     if (row.log) {
       return (
         <button type="button" className="log-act get" disabled={erasing || link.armed || !link.ok} onClick={() => enqueueDownloads([{ id: row.log!.id, size: row.log!.size }])}>
@@ -791,10 +811,35 @@ export function VehicleLogs({ active }: { active: boolean }) {
     const what = row.scan ? [row.scan.frame, row.scan.firmware].filter(Boolean).join(" · ") : brief && !brief.error ? [brief.frame, brief.firmware].filter(Boolean).join(" · ") : "";
     const open = () => setEditing({ key: row.key, draft: row.note });
     if (row.note) return <button type="button" className="log-note" title={row.note} onClick={open}>{row.note}</button>;
+    if (brief?.error === NO_LOG_DATA && !row.scan) return <i className="log-bad" title={t(brief.error)}>{t("Empty log")}</i>;
     if (brief?.error && !row.scan) return <i className="log-bad" title={t(brief.error)}>{t("Header unreadable")}</i>;
     if (what) return <button type="button" className="log-fw" title={t("Add a note")} onClick={open}>{what}</button>;
     if (row.log && !brief && reading === row.log.id) return <i className="log-nil">{t("Reading the log header…")}</i>;
     if (!row.log && !row.scan && row.name) return <button type="button" className="log-fw mono" title={t("Add a note")} onClick={open}>{row.name}</button>;
+    return <i className="log-nil">—</i>;
+  }
+
+  /** Size, frame, firmware, changes and note in one line, for a table too narrow for their columns. */
+  function subLine(row: Row): string {
+    const brief = row.brief;
+    const parts = [sizeLabel(row.size)];
+    if (brief?.error === NO_LOG_DATA && !row.scan) parts.push(t("Empty log"));
+    else if (brief?.error && !row.scan) parts.push(t("Header unreadable"));
+    else if (row.log && !brief && !row.scan && reading === row.log.id) parts.push(t("Reading the log header…"));
+    const what = row.scan ? [row.scan.frame, row.scan.firmware] : brief && !brief.error ? [brief.frame, brief.firmware] : [];
+    parts.push(...what.filter(Boolean));
+    if (row.changes?.firmware) parts.push(`FW ${row.changes.firmware.from} → ${row.changes.firmware.to}`);
+    else if (row.changes?.count) parts.push(t(row.changes.count === 1 ? "{n} param" : "{n} params", { n: row.changes.count }));
+    if (row.file?.original_name) parts.push(t("from {name}", { name: row.file.original_name }));
+    if (row.note) parts.push(`✎ ${row.note}`);
+    if (!row.log && !row.scan && row.name && !row.file?.original_name && parts.length === 1) parts.push(row.name);
+    return parts.join(" · ");
+  }
+
+  function dateCell(row: Row): ReactNode {
+    if (row.at) return WHEN.format(row.at);
+    // A board log with a time before the clock was set: the board had no GPS time.
+    if (row.log && row.log.time_utc > 0) return <i className="log-nil" title={t("The board had no GPS time when it wrote this log")}>{t("No GPS time")}</i>;
     return <i className="log-nil">—</i>;
   }
 
@@ -841,10 +886,10 @@ export function VehicleLogs({ active }: { active: boolean }) {
           <button
             type="button"
             className="log-act get wide"
-            disabled={!missing.length || !link.ok || link.armed || erasing}
-            onClick={() => enqueueDownloads([...missing].reverse().map((row) => ({ id: row.log!.id, size: row.log!.size })))}
+            disabled={!fetchable.length || !link.ok || link.armed || erasing}
+            onClick={() => enqueueDownloads([...fetchable].reverse().map((row) => ({ id: row.log!.id, size: row.log!.size })))}
           >
-            {missing.length ? t("Download all · {n}", { n: missing.length }) : t("Download all")}
+            {fetchable.length ? t("Download all · {n}", { n: fetchable.length }) : t("Download all")}
           </button>
           <button type="button" className="log-mini" aria-label={t("More actions")} onPointerDown={(ev) => ev.stopPropagation()} onClick={(ev) => (menu?.kind === "bar" ? setMenu(null) : openMenu(ev, { kind: "bar" }))}>⋯</button>
         </div>
@@ -884,8 +929,15 @@ export function VehicleLogs({ active }: { active: boolean }) {
                 <span role="cell">
                   <button type="button" className={`log-star${row.star ? " on" : ""}`} aria-pressed={row.star} aria-label={row.star ? t("Unstar") : t("Star")} onClick={() => setMeta(row, { star: !row.star })}>{row.star ? "★" : "☆"}</button>
                 </span>
-                <span className="c-id" role="cell">{row.num ?? "—"}{newest ? <em>{t("newest")}</em> : null}</span>
-                <span role="cell">{row.at ? WHEN.format(row.at) : <i className="log-nil">—</i>}</span>
+                <span className="c-id" role="cell">
+                  {row.num ?? "—"}{newest ? <em>{t("newest")}</em> : null}
+                  {sitlDir(row.board) ? <em className="log-tag sitl" title={t("Written by ArduPilot SITL, not a real board")}>SITL</em> : null}
+                  {row.file && (row.file.original_name || row.board === "imported") ? <em className="log-tag imp" title={t("Loaded from this computer: {name}", { name: row.file.original_name || row.name })}>{t("imported")}</em> : null}
+                </span>
+                <span className="c-date" role="cell">
+                  <span className="log-date">{dateCell(row)}</span>
+                  <small className="log-sub" title={subLine(row)}>{subLine(row)}</small>
+                </span>
                 <span className={`c-armed${armed === t("never armed") ? " log-nil" : ""}`} role="cell" title={armed || undefined}>
                   <span className="wide-only">{armed || <i className="log-nil">—</i>}</span><span className="narrow-only">{armedShort || <i className="log-nil">—</i>}</span>
                 </span>
@@ -985,7 +1037,7 @@ export function VehicleLogs({ active }: { active: boolean }) {
               <button type="button" className="log-act danger" onClick={() => void erase()}>{t("Erase board")}</button>
             </>}>
               <p>{t("Deletes all {n} logs on the board. Your copies on this computer stay. Parameters are not touched.", { n: logs.length })}</p>
-              {missing.length ? <p className="amber">{t(missing.length === 1 ? "Board log {list} is not saved yet." : "{n} board logs are not saved yet: {list}.", { n: missing.length, list: missing.map((r) => r.num).join(", ") })}</p> : null}
+              {fetchable.length ? <p className="amber">{t(fetchable.length === 1 ? "Board log {list} is not saved yet." : "{n} board logs are not saved yet: {list}.", { n: fetchable.length, list: fetchable.map((r) => r.num).join(", ") })}</p> : null}
             </LogDialog>
           ) : null}
           {dialog.kind === "share" ? <ShareDialog rows={dialog.rows} onClose={() => setDialog(null)} onShare={(opts) => void share(dialog.rows, opts)} /> : null}

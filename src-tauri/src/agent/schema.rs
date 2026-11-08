@@ -288,9 +288,9 @@ fn tool_schema() -> Value {
         {
             "name": "log_filter_review",
             "description": doc!(
-                "Analyzes gyro vibration noise and optimizes harmonic notch and low-pass filter parameters from a DataFlash log (equivalent to ArduPilot WebTools FilterReview).",
-                "Simulates post-filter noise attenuation and control phase delay.",
-                "Returns primary motor noise peak, estimated hover throttle, current vs proposed filter parameters, and noise reduction (dB).",
+                "Analyzes gyro vibration noise and the harmonic notch and gyro low-pass from a DataFlash log (equivalent to ArduPilot WebTools FilterReview).",
+                "Simulates the filters batch by batch, with the notch where it tracked at that moment, for the noise left after them and their phase delay at 30 Hz.",
+                "Returns the motor line, each harmonic's level and whether a notch covers it, each motor's frequency, the measured post-filter capture when the log has one, and the settings that leave no more noise than now with the least delay.",
                 "`axis` is `all` (default), `roll`, `pitch`, or `yaw`.",
                 "`start_us` and `end_us` bound the analyzed flight interval.",
             ),
@@ -779,6 +779,35 @@ fn tool_schema() -> Value {
                     }
                 },
                 "required": ["controller_key"]
+            }
+        },
+        {
+            "name": "board_list",
+            "description": doc!(
+                "List the boards this computer has seen, by MCU UID, newest first.",
+                "Each has its note, profile, board name, frame, when it was last on the link, and how many saved parameters, logs on this computer, and chats it has.",
+                "One of them can be the board on the link now.",
+                "Nothing is read from a vehicle.",
+            ),
+            "parameters": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "board_summary",
+            "description": doc!(
+                "Read one board from the database by `key` from `board_list`, also a board that is not on the link.",
+                "Returns its note, profile, the parameters saved the last time it was linked, and its logs on this computer (ids for the log tools).",
+                "Pass `prefix` or `glob` to limit the parameters, or `compare` true for only the parameters that differ from the board on the link.",
+                "Nothing is written. A change to the board on the link goes through `set_param`, `vehicle_comment`, or `profile_widget`.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string", "description": "The board `key` from `board_list`." },
+                    "prefix": { "type": "string", "description": "The start of a parameter name, such as `ATC_RAT_`. Case is ignored." },
+                    "glob": { "type": "string", "description": "A parameter-name pattern such as `INS_HNTCH_*`. Case is ignored. When set, `prefix` is not used." },
+                    "compare": { "type": "boolean", "description": "Only the parameters whose saved value differs from the board on the link, or that one of the two does not have." }
+                },
+                "required": ["key"]
             }
         },
         {

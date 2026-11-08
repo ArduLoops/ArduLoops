@@ -462,6 +462,7 @@ fn kept_whole(name: &str) -> bool {
             | "log_params"
             | "list_params"
             | "get_param"
+            | "board_summary"
     )
 }
 

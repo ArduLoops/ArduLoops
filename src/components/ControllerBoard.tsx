@@ -4,6 +4,7 @@ import { addLog } from "../log";
 import { send as sendCmd } from "../mav/cmd";
 import { APP_HTTP } from "../mav/link";
 import { downloadParamBackup } from "../mav/paramBackup";
+import { useLinkedController, VEHICLE_SAVED } from "../lib/linkedController";
 import { openSetupOverview } from "../lib/setupNav";
 import { prearmAsk } from "../lib/setupSteps";
 import { FixButton } from "./HardwareSetup";
@@ -13,7 +14,7 @@ import type { Sample } from "../mav/types";
 import { usePicked, useVehicle } from "../mav/view";
 import { NOTE_TITLE_MAX, flightVersion, genericMark, joinNote, markShape, preArmState, splitNote, versionKnown, type MarkShape } from "../lib/vehicleHeader";
 
-type Controller = {
+export type Controller = {
   board_id: number;
   vehicle_id: string;
   git_identity?: string | null;
@@ -55,7 +56,7 @@ function num(sample: Sample, key: string): number | null {
 }
 
 /** The mark follows the frame: copter arms from motorFrames, plane from its surface layout. */
-function VehicleMark({ shape }: { shape: MarkShape }) {
+export function VehicleMark({ shape }: { shape: MarkShape }) {
   const g = { fill: "currentColor", fillOpacity: 0.14, stroke: "currentColor", strokeWidth: 1.9, strokeLinejoin: "round" as const };
   if (shape.kind === "plane") {
     const fuselage = <><polygon points="48,5 43,18 53,18" /><rect x="44.5" y="16" width="7" height="46" rx="2" /></>;
@@ -277,7 +278,7 @@ const AirspeedTile = memo(function AirspeedTile() {
   return <Tile label={t("Airspeed")} value={key || "—"} sub="m/s" tone={key ? "ok" : "mute"} />;
 });
 
-function NoteEditor({ initial, focus, onClose, onSaved, controllerKey }: { initial: string; focus: "name" | "note"; onClose: () => void; onSaved: () => void; controllerKey: string }) {
+export function NoteEditor({ initial, focus, onClose, onSaved, controllerKey }: { initial: string; focus: "name" | "note"; onClose: () => void; onSaved: () => void; controllerKey: string }) {
   const t = useT();
   const start = splitNote(initial);
   const [name, setName] = useState(start.title);
@@ -339,7 +340,7 @@ function NoteEditor({ initial, focus, onClose, onSaved, controllerKey }: { initi
 }
 
 /** The vehicle profile form under the header. Save stores the profile and the note body; the name line stays. */
-function ProfileEditor({ controller, onClose, onSaved, blocked }: { controller: Controller | null; onClose: () => void; onSaved: () => void; blocked: string }) {
+export function ProfileEditor({ controller, onClose, onSaved, blocked }: { controller: Controller | null; onClose: () => void; onSaved: () => void; blocked: string }) {
   const t = useT();
   const comment = controller?.comment ?? "";
   const start = useProfileStart(readProfile(controller?.profile), comment);
@@ -466,7 +467,7 @@ function Actions({ controller }: { controller: Controller | null }) {
 }
 
 const EDIT_VEHICLE = "arduloops:edit-vehicle";
-const VEHICLE_SAVED = "arduloops:vehicle-saved";
+export { VEHICLE_SAVED };
 
 /** Open the header's profile form or note editor from anywhere. */
 export function editVehicle(what: "profile" | "note") {
@@ -479,26 +480,9 @@ export function editVehicle(what: "profile" | "note") {
  */
 export function useVehicleFacts(): { linked: boolean; title: string; body: string; chips: string[]; profiled: boolean; canEdit: boolean } {
   const t = useT();
-  const identity = usePicked((s) => `${s.ok ? 1 : 0}|${s.boot_uid ?? ""}|${s.frame}|${versionKnown(s) ? 1 : 0}`);
+  const identity = usePicked((s) => `${s.ok ? 1 : 0}|${s.boot_uid ?? ""}`);
   const vehicle = usePicked((s) => (s.frame === "plane" ? "plane" : "copter"));
-  const [controller, setController] = useState<Controller | null>(null);
-  useEffect(() => {
-    let ac = new AbortController();
-    const load = () => {
-      ac.abort();
-      ac = new AbortController();
-      void fetch(`${APP_HTTP}/firmware-library`, { cache: "no-store", signal: ac.signal })
-        .then((response) => (response.ok ? response.json() : null))
-        .then((value: { controller?: Controller | null } | null) => setController(value?.controller ?? null))
-        .catch(() => {});
-    };
-    load();
-    window.addEventListener(VEHICLE_SAVED, load);
-    return () => {
-      ac.abort();
-      window.removeEventListener(VEHICLE_SAVED, load);
-    };
-  }, [identity]);
+  const controller = useLinkedController<Controller>();
   const note = splitNote(controller?.comment);
   const profile = readProfile(controller?.profile);
   const chips = profile ? profileChips(profile, vehicle, t) : [];

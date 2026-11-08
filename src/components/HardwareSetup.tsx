@@ -571,7 +571,6 @@ export const HardwareSetup = memo(function HardwareSetup() {
   const { face, steps, states } = useSetupFace();
   const frame = face.frame;
   const [open, setOpen] = useState(OVERVIEW);
-  const [requiredOnly, setRequiredOnly] = useState(false);
   const waitingCards = useSyncExternalStore(subscribeSetupView, getWaitingCards, getWaitingCards);
   const waiting = waitingOn(steps, waitingCards);
   const required = steps.filter((item) => !item.optional);
@@ -618,16 +617,6 @@ export const HardwareSetup = memo(function HardwareSetup() {
       {face.armed ? <div className="setup-armed" role="status">{t("Armed. Setup is read-only until the vehicle is disarmed.")}</div> : null}
       <div className="setup">
         <nav className="setup-rail" aria-label={t("Setup steps")}>
-          <div className="setup-rail-top">
-            <div className="setup-rail-row">
-              <b>{t("{done} of {total} required", { done, total: required.length })}</b>
-              <span className="setup-seg" role="group" aria-label={t("Show steps")}>
-                <button type="button" aria-pressed={requiredOnly} onClick={() => setRequiredOnly(true)}>{t("Required")}</button>
-                <button type="button" aria-pressed={!requiredOnly} onClick={() => setRequiredOnly(false)}>{t("All")}</button>
-              </span>
-            </div>
-            <span className={attention ? "setup-bar amber" : "setup-bar"}><i style={{ width: `${required.length ? Math.round((done / required.length) * 100) : 0}%` }} /></span>
-          </div>
           <button
             type="button"
             className={`setup-step setup-ov ${face.arm === "off" ? "todo" : blocking ? "fail" : attention ? "warn" : openCount ? "todo" : "done"}${overview ? " on" : ""}`}
@@ -644,13 +633,11 @@ export const HardwareSetup = memo(function HardwareSetup() {
             </span>
           </button>
           {GROUPS.map((group) => {
-            const members = steps.map((item, i) => ({ item, i })).filter(({ item }) => item.group === group && (!requiredOnly || !item.optional));
+            const members = steps.map((item, i) => ({ item, i })).filter(({ item }) => item.group === group);
             if (!members.length) return null;
-            const need = members.filter(({ item }) => !item.optional);
-            const groupDone = need.filter(({ i }) => settled(states[i].state)).length;
             return (
               <div className="setup-group" key={group}>
-                <div className="setup-group-head"><span>{t(group)}</span><span>{need.length ? `${groupDone}/${need.length}` : t("optional")}</span></div>
+                <div className="setup-group-head"><span>{t(group)}</span></div>
                 <ol className="setup-list">
                   {members.map(({ item, i }) => {
                     const on = !overview && item.id === step.id;

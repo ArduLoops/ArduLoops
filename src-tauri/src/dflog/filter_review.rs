@@ -2,7 +2,13 @@
 
 /// Computes the complex frequency response H(f) of a digital biquad notch filter,
 /// exactly matching ArduPilot WebTools FilterReview.js and ArduPilot HarmonicNotchFilter.
+#[cfg(test)]
 pub fn notch_response(f0: f64, bw: f64, fs: f64, f: f64) -> (f64, f64) {
+    notch_response_att(f0, bw, 40.0, fs, f)
+}
+
+/// The same notch with its depth set by `att_db` (INS_HNTCH_ATT): A = 10^(-att/40).
+pub fn notch_response_att(f0: f64, bw: f64, att_db: f64, fs: f64, f: f64) -> (f64, f64) {
     if fs <= 0.0 || f0 <= 0.0 || bw <= 0.0 || f0 <= 0.5 * bw || f0 >= 0.5 * fs {
         return (1.0, 0.0);
     }
@@ -11,8 +17,8 @@ pub fn notch_response(f0: f64, bw: f64, fs: f64, f: f64) -> (f64, f64) {
     let pow2 = 2.0f64.powf(octaves);
     let q = (pow2.sqrt() / (pow2 - 1.0)).clamp(0.1, 100.0);
 
-    // Default attenuation: -40 dB -> A = 10^(-40/40) = 0.1
-    let a = 0.1;
+    // Attenuation: -40 dB -> A = 10^(-40/40) = 0.1
+    let a = 10f64.powf(-att_db / 40.0);
     let a_sq = a * a;
 
     let omega0 = 2.0 * pi * f0 / fs;
@@ -97,78 +103,6 @@ pub struct FilterSimResult {
     pub phase_delay_at_30hz_ms: f64,
 }
 
-pub fn simulate_filter(
-    freq: f64,
-    bw: f64,
-    harmonics_mask: u32,
-    lpf_hz: f64,
-    sample_rate: f64,
-    raw_spectrum: &[(f64, f64)], // (freq_hz, amp)
-) -> FilterSimResult {
-    if raw_spectrum.is_empty() || sample_rate <= 0.0 {
-        return FilterSimResult {
-            noise_attenuation_db: 0.0,
-            phase_delay_at_30hz_ms: 0.0,
-        };
-    }
-
-    // Determine active notch harmonic frequencies
-    let mut notch_freqs = Vec::new();
-    for h in 0..8 {
-        if (harmonics_mask & (1 << h)) != 0 {
-            notch_freqs.push(freq * (h + 1) as f64);
-        }
-    }
-
-    let mut in_noise_power = 0.0;
-    let mut out_noise_power = 0.0;
-
-    for &(f, amp) in raw_spectrum {
-        if f < 20.0 {
-            continue; // Skip aircraft control motion band (< 20 Hz)
-        }
-        let mut total_gain = 1.0;
-        for &nf in &notch_freqs {
-            let (g, _) = notch_response(nf, bw, sample_rate, f);
-            total_gain *= g;
-        }
-        if lpf_hz > 0.0 {
-            let (lg, _) = lpf_response(lpf_hz, sample_rate, f);
-            total_gain *= lg;
-        }
-
-        let p_in = amp * amp;
-        let p_out = p_in * (total_gain * total_gain);
-        in_noise_power += p_in;
-        out_noise_power += p_out;
-    }
-
-    let attenuation_db = if in_noise_power > 1e-12 && out_noise_power > 1e-12 {
-        10.0 * (in_noise_power / out_noise_power).log10()
-    } else {
-        0.0
-    };
-
-    // Phase delay at control frequency (30 Hz)
-    let eval_f = 30.0;
-    let mut total_phase = 0.0;
-    for &nf in &notch_freqs {
-        let (_, p) = notch_response(nf, bw, sample_rate, eval_f);
-        total_phase += p;
-    }
-    if lpf_hz > 0.0 {
-        let (_, lp) = lpf_response(lpf_hz, sample_rate, eval_f);
-        total_phase += lp;
-    }
-    let delay_s = -total_phase / (2.0 * std::f64::consts::PI * eval_f);
-    let delay_ms = (delay_s * 1000.0).max(0.0);
-
-    FilterSimResult {
-        noise_attenuation_db: (attenuation_db * 10.0).round() / 10.0,
-        phase_delay_at_30hz_ms: (delay_ms * 10.0).round() / 10.0,
-    }
-}
-
 /// Main entry point for log_filter_review calculation from log bytes.
 pub fn filter_review_bytes(
     bytes: &[u8],
@@ -186,6 +120,8 @@ pub fn filter_review_bytes(
     let mut ftn_snrs = Vec::new();
     let mut throttles = Vec::new();
     let mut rpms = Vec::new();
+    let mut motor_rpm: BTreeMap<u64, Vec<(u64, f64)>> = BTreeMap::new();
+    let mut tracked: Vec<(u64, f64)> = Vec::new();
     let mut rate_gyr = Vec::new();
     let mut first_tho_us = 0u64;
     let mut last_tho_us = 0u64;
@@ -230,6 +166,14 @@ pub fn filter_review_bytes(
             if let Some(rpm) = field_f64(fmt, values, "RPM") {
                 if rpm > 500.0 {
                     rpms.push((us, rpm));
+                    let motor = field_u64(fmt, values, "Instance").unwrap_or(0);
+                    motor_rpm.entry(motor).or_default().push((us, rpm));
+                }
+            }
+        } else if fmt.name == "FTNS" {
+            if let Some(nf) = field_f64(fmt, values, "NF") {
+                if nf > 0.0 {
+                    tracked.push((us, nf));
                 }
             }
         } else if fmt.name == "RATE" {
@@ -320,63 +264,154 @@ pub fn filter_review_bytes(
         sorted_tho[sorted_tho.len() / 2]
     };
 
-    // Current parameters
-    let cur_enable = parms.get("INS_HNTCH_ENABLE").copied().unwrap_or(0.0) as u32;
-    let cur_mode = parms.get("INS_HNTCH_MODE").copied().unwrap_or(0.0) as u32;
-    let cur_freq = parms.get("INS_HNTCH_FREQ").copied().unwrap_or(0.0);
-    let cur_bw = parms.get("INS_HNTCH_BW").copied().unwrap_or(0.0);
-    let cur_hmncs = parms.get("INS_HNTCH_HMNCS").copied().unwrap_or(1.0) as u32;
-    let cur_ref = parms.get("INS_HNTCH_REF").copied().unwrap_or(0.0);
-    let cur_gyro_filter = parms.get("INS_GYRO_FILTER").copied().unwrap_or(20.0);
-
-    // Recommended parameters
-    let rec_freq = if detected_peak_hz > 30.0 { detected_peak_hz.round() } else { 120.0 };
-    let rec_bw = (rec_freq * 0.5).round().max(20.0);
-    let rec_hmncs: u32 = 3; // 1st and 2nd harmonic
-    let rec_mode: u32 = if !rpms.is_empty() {
-        3 // RPM based
-    } else {
-        1 // Throttle based
+    let (fundamental_amp, resolution) = spectrum_peak(&spectrum, detected_peak_hz);
+    let post_view = views.iter().find(|view| view["capture"].as_str() == Some("post-filter")).cloned();
+    let median = |values: &mut Vec<f64>| -> Option<f64> {
+        if values.is_empty() {
+            return None;
+        }
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        Some(values[values.len() / 2])
     };
-    let rec_ref = if rec_mode == 1 { (hover_tho * 100.0).round() / 100.0 } else { 0.0 };
-    let rec_gyro_filter = if rec_freq > 150.0 { 40.0 } else { 30.0 };
+    let tracked_hz = median(&mut tracked.iter().map(|(_, hz)| *hz).collect());
 
-    // Simulate current vs proposed filter
-    let cur_sim = simulate_filter(cur_freq, cur_bw, cur_hmncs, cur_gyro_filter, sample_hz, &spectrum);
-    let prop_sim = simulate_filter(rec_freq, rec_bw, rec_hmncs, rec_gyro_filter, sample_hz, &spectrum);
-
-    let needs_update = cur_enable == 0
-        || (cur_freq - rec_freq).abs() > 25.0
-        || (cur_bw - rec_bw).abs() > 20.0
-        || cur_mode != rec_mode;
-
-    let assessment = if cur_enable == 0 {
-        format!(
-            "Harmonic notch filter is disabled. Detected motor noise peak at {:.1} Hz. Enabling notch filter will reduce gyro noise by {:.1} dB with only {:.1} ms delay.",
-            rec_freq, prop_sim.noise_attenuation_db, prop_sim.phase_delay_at_30hz_ms
-        )
-    } else if needs_update {
-        format!(
-            "Current notch is configured for {:.1} Hz (BW {:.1} Hz), but the actual motor vibration peak is at {:.1} Hz. Updating parameters increases noise attenuation from {:.1} dB to {:.1} dB.",
-            cur_freq, cur_bw, rec_freq, cur_sim.noise_attenuation_db, prop_sim.noise_attenuation_db
-        )
-    } else {
-        format!(
-            "Harmonic notch is well-tuned! Current peak {:.1} Hz matches configured notch ({:.1} Hz). Attenuation: {:.1} dB, phase delay: {:.1} ms.",
-            detected_peak_hz, cur_freq, cur_sim.noise_attenuation_db, cur_sim.phase_delay_at_30hz_ms
-        )
+    let get = |name: &str, default: f64| parms.get(name).copied().unwrap_or(default);
+    let cur = NotchPlan {
+        enable: get("INS_HNTCH_ENABLE", 0.0) >= 0.5,
+        mode: get("INS_HNTCH_MODE", 0.0).round() as u32,
+        freq: get("INS_HNTCH_FREQ", 0.0),
+        bw: get("INS_HNTCH_BW", 0.0),
+        att: get("INS_HNTCH_ATT", 40.0),
+        hmncs: get("INS_HNTCH_HMNCS", 1.0).round().max(0.0) as u32,
+        opts: get("INS_HNTCH_OPTS", 0.0).round().max(0.0) as u32,
+        lpf: get("INS_GYRO_FILTER", 20.0),
     };
 
-    let mut proposed_params = BTreeMap::new();
-    proposed_params.insert("INS_HNTCH_ENABLE".to_string(), json!(1));
-    proposed_params.insert("INS_HNTCH_MODE".to_string(), json!(rec_mode));
-    proposed_params.insert("INS_HNTCH_FREQ".to_string(), json!(rec_freq));
-    proposed_params.insert("INS_HNTCH_BW".to_string(), json!(rec_bw));
-    proposed_params.insert("INS_HNTCH_HMNCS".to_string(), json!(rec_hmncs));
-    if rec_mode == 1 {
-        proposed_params.insert("INS_HNTCH_REF".to_string(), json!(rec_ref));
+    // Where the notch sits in flight: a dynamic notch follows the motors (FTNS), a static one sits at FREQ.
+    let base_hz = if cur.enable && cur.mode != 0 { tracked_hz.or(Some(detected_peak_hz)).unwrap_or(cur.freq) } else { cur.freq };
+    let motor_hz: Vec<f64> = motor_rpm.values().filter_map(|rows| median(&mut rows.iter().map(|(_, rpm)| *rpm).collect())).map(|rpm| rpm / 60.0).collect();
+    // The batches the simulation runs on: each pre-filter batch with the notch where it was then.
+    let batches = BatchSet::new(&scan, views.first(), &spectrum, sample_hz, &tracked, &motor_rpm);
+    let spread_hz = if motor_hz.len() >= 2 {
+        motor_hz.iter().copied().fold(f64::MIN, f64::max) - motor_hz.iter().copied().fold(f64::MAX, f64::min)
+    } else {
+        0.0
+    };
+
+    // Each harmonic of the motor line: its level against the fundamental and whether a notch covers it.
+    let nyquist = sample_hz * 0.5;
+    let mut harmonics = Vec::new();
+    for n in 1..=6u32 {
+        let hz = detected_peak_hz * n as f64;
+        if detected_peak_hz <= 0.0 || hz >= nyquist * 0.9 {
+            break;
+        }
+        // A narrow window: the line itself, not the broadband noise around it.
+        let (amp, _) = spectrum_peak_near(&spectrum, hz, (hz * 0.04).max(resolution * 2.0));
+        let level = if amp <= 0.0 || fundamental_amp <= 0.0 { -120.0 } else { 20.0 * (amp / fundamental_amp).log10() };
+        let covered = cur.enable && cur.hmncs & (1 << (n - 1)) != 0;
+        harmonics.push(json!({ "n": n, "hz": (hz * 10.0).round() / 10.0, "level_db": (level * 10.0).round() / 10.0, "notched": covered }));
     }
-    proposed_params.insert("INS_GYRO_FILTER".to_string(), json!(rec_gyro_filter));
+
+    // Proposal: of the settings that leave no more noise after the filters than now, the one with the
+    // least delay at 30 Hz (fewest notches on a tie). It may add notches on loud harmonics, Multi-Source
+    // (ESC RPM only), and a higher gyro low-pass.
+    let mut base = cur.clone();
+    base.enable = true;
+    if !cur.enable {
+        base.mode = if !rpms.is_empty() { 3 } else { 1 };
+        base.freq = detected_peak_hz.round().max(30.0);
+        base.bw = (base.freq * 0.5).round().max(20.0);
+        base.att = 40.0;
+        base.hmncs = 1;
+    } else if cur.mode == 0 && (cur.freq - detected_peak_hz).abs() > cur.bw.max(20.0) * 0.5 && detected_peak_hz > 30.0 {
+        base.freq = detected_peak_hz.round();
+        base.bw = (base.freq * 0.5).round().max(20.0);
+    }
+    let rec_base = if base.mode != 0 { tracked_hz.unwrap_or(detected_peak_hz) } else { base.freq };
+    let cur_centres = notch_centres(&cur, base_hz, &motor_hz);
+    let cur_left = batches.after_notches(&cur, base_hz, &motor_hz);
+    let cur_noise = batches.residual(&cur_left, cur.lpf);
+    let cur_delay = plan_result(&cur, &cur_centres, sample_hz, &spectrum).phase_delay_at_30hz_ms;
+    let extra: Vec<u32> = harmonics.iter()
+        .filter_map(|row| Some((row["n"].as_u64()? as u32, row["level_db"].as_f64()?)))
+        .filter(|(n, level)| *level >= HARMONIC_LOUD_DB && base.hmncs & (1 << (n - 1)) == 0)
+        .map(|(n, _)| 1 << (n - 1))
+        .collect();
+    let multi_options: &[bool] = if base.mode == 3 && motor_hz.len() >= 2 { &[false, true] } else { &[false] };
+    let max_lpf = (sample_hz * 0.25).min(LPF_CEILING_HZ);
+    let mut best: Option<(NotchPlan, f64)> = None;
+    for subset in 0..(1u32 << extra.len().min(4)) {
+        let mut mask = base.hmncs;
+        for (i, bit) in extra.iter().take(4).enumerate() {
+            if subset & (1 << i) != 0 {
+                mask |= bit;
+            }
+        }
+        for &multi in multi_options {
+            let mut plan = base.clone();
+            plan.hmncs = mask;
+            plan.opts = if multi { base.opts | MULTI_SOURCE } else { base.opts & !MULTI_SOURCE };
+            let centres = notch_centres(&plan, rec_base, &motor_hz);
+            let left = batches.after_notches(&plan, rec_base, &motor_hz);
+            let mut lpf = cur.lpf;
+            let mut step = (cur.lpf / 5.0).floor() * 5.0 + 5.0;
+            while step <= max_lpf {
+                if batches.residual(&left, step) <= cur_noise {
+                    lpf = step;
+                }
+                step += 5.0;
+            }
+            plan.lpf = lpf;
+            if batches.residual(&left, plan.lpf) > cur_noise * 1.0001 {
+                continue;
+            }
+            let delay = plan_result(&plan, &centres, sample_hz, &spectrum).phase_delay_at_30hz_ms;
+            let better = match &best {
+                None => true,
+                Some((kept, kept_delay)) => delay < kept_delay - 0.05
+                    || ((delay - kept_delay).abs() <= 0.05 && centres.len() < notch_centres(kept, rec_base, &motor_hz).len()),
+            };
+            if better {
+                best = Some((plan, delay));
+            }
+        }
+    }
+    // Keep the settings on the vehicle unless a change takes off real delay.
+    let rec = match best {
+        Some((plan, delay)) if !cur.enable || delay < cur_delay - 0.2 => plan,
+        _ => base,
+    };
+    let rec_centres = notch_centres(&rec, rec_base, &motor_hz);
+    let rec_left = batches.after_notches(&rec, rec_base, &motor_hz);
+    let cur_sim = FilterSimResult {
+        noise_attenuation_db: batches.attenuation_db(&cur_left, cur.lpf),
+        phase_delay_at_30hz_ms: cur_delay,
+    };
+    let rec_sim = FilterSimResult {
+        noise_attenuation_db: batches.attenuation_db(&rec_left, rec.lpf),
+        phase_delay_at_30hz_ms: plan_result(&rec, &rec_centres, sample_hz, &spectrum).phase_delay_at_30hz_ms,
+    };
+
+    let mut proposed = serde_json::Map::new();
+    let mut put = |name: &str, now: f64, next: f64| {
+        if (now - next).abs() > 1e-6 {
+            proposed.insert(name.to_string(), json!(next));
+        }
+    };
+    put("INS_HNTCH_ENABLE", if cur.enable { 1.0 } else { 0.0 }, 1.0);
+    put("INS_HNTCH_MODE", cur.mode as f64, rec.mode as f64);
+    put("INS_HNTCH_FREQ", cur.freq, rec.freq);
+    put("INS_HNTCH_BW", cur.bw, rec.bw);
+    put("INS_HNTCH_HMNCS", cur.hmncs as f64, rec.hmncs as f64);
+    put("INS_HNTCH_OPTS", cur.opts as f64, rec.opts as f64);
+    put("INS_GYRO_FILTER", cur.lpf, rec.lpf);
+    let needs_update = !proposed.is_empty();
+
+    let measured = post_view.map(|view| json!({
+        "attenuation_db": view["attenuation_db"],
+        "harmonic_attenuation_db": view["harmonic_attenuation_db"],
+    }));
 
     let chart_end = if last_tho_us > first_tho_us { (first_tho_us + 10_000_000).min(last_tho_us) } else { first_tho_us + 10_000_000 };
     let suggested_chart = json!({
@@ -400,26 +435,212 @@ pub fn filter_review_bytes(
         "suggested_chart": suggested_chart,
         "sample_rate_hz": (sample_hz * 10.0).round() / 10.0,
         "primary_peak_hz": (detected_peak_hz * 10.0).round() / 10.0,
+        "tracked_notch_hz": tracked_hz.map(|hz| (hz * 10.0).round() / 10.0),
+        "motor_hz": motor_hz.iter().map(|hz| (hz * 10.0).round() / 10.0).collect::<Vec<_>>(),
+        "motor_spread_hz": (spread_hz * 10.0).round() / 10.0,
         "estimated_hover_throttle": (hover_tho * 100.0).round() / 100.0,
+        "harmonics": harmonics,
         "current_params": {
-            "INS_HNTCH_ENABLE": cur_enable,
-            "INS_HNTCH_MODE": cur_mode,
-            "INS_HNTCH_FREQ": cur_freq,
-            "INS_HNTCH_BW": cur_bw,
-            "INS_HNTCH_HMNCS": cur_hmncs,
-            "INS_HNTCH_REF": cur_ref,
-            "INS_GYRO_FILTER": cur_gyro_filter
+            "INS_HNTCH_ENABLE": cur.enable as u32,
+            "INS_HNTCH_MODE": cur.mode,
+            "INS_HNTCH_FREQ": cur.freq,
+            "INS_HNTCH_BW": cur.bw,
+            "INS_HNTCH_ATT": cur.att,
+            "INS_HNTCH_HMNCS": cur.hmncs,
+            "INS_HNTCH_OPTS": cur.opts,
+            "INS_GYRO_FILTER": cur.lpf
         },
-        "proposed_params": Value::Object(proposed_params.into_iter().map(|(k, v)| (k, v)).collect()),
+        "proposed_params": Value::Object(proposed),
         "simulation": {
             "current_attenuation_db": cur_sim.noise_attenuation_db,
             "current_phase_delay_ms": cur_sim.phase_delay_at_30hz_ms,
-            "proposed_attenuation_db": prop_sim.noise_attenuation_db,
-            "proposed_phase_delay_ms": prop_sim.phase_delay_at_30hz_ms
+            "proposed_attenuation_db": rec_sim.noise_attenuation_db,
+            "proposed_phase_delay_ms": rec_sim.phase_delay_at_30hz_ms
         },
+        "measured_post_filter": measured,
         "needs_update": needs_update,
-        "assessment": assessment
+        "note": concat!(
+            "harmonics: each multiple of the motor line in the pre-filter spectrum, level_db against the fundamental, and notched when INS_HNTCH_HMNCS covers it; a harmonic that is not notched reaches the controller through the gyro low-pass only. ",
+            "motor_hz is each motor's median ESC RPM / 60; motor_spread_hz is the gap between the fastest and slowest. One notch at their average leaves the edges of the peak; Multi-Source (INS_HNTCH_OPTS bit 1) puts one notch on each motor and needs the ESC RPM source. ",
+            "proposed_params lists only values that change. Of the settings that leave no more simulated noise after all filters than the current ones, it is the one with the least delay at 30 Hz: it may notch harmonics louder than -30 dB, turn on Multi-Source, and raise INS_GYRO_FILTER. Empty means the current settings already are that. ",
+            "attenuation_db is the noise above 20 Hz removed by all filters together, simulated batch by batch with the notch where it tracked at that moment, as WebTools FilterReview does; phase_delay_ms is their delay at 30 Hz, the lag the rate loop sees. ",
+            "measured_post_filter is the post-filter batch capture, measured not simulated: attenuation of the motor line and of each harmonic between the raw and the filtered gyro. ",
+            "A simulation uses one log; the next flight's spectrum is what confirms a change."
+        ),
     })
+}
+
+/// The sound a harmonic must have, against the fundamental, to be worth a notch.
+const HARMONIC_LOUD_DB: f64 = -30.0;
+/// INS_HNTCH_OPTS bit 1: one notch per ESC RPM source.
+const MULTI_SOURCE: u32 = 1 << 1;
+/// The gyro low-pass is not proposed above this.
+const LPF_CEILING_HZ: f64 = 120.0;
+
+#[derive(Clone)]
+struct NotchPlan {
+    enable: bool,
+    mode: u32,
+    freq: f64,
+    bw: f64,
+    att: f64,
+    hmncs: u32,
+    opts: u32,
+    lpf: f64,
+}
+
+/// The notch centres and widths in flight: each enabled harmonic of the base (or of each motor with
+/// Multi-Source). The quality factor is fixed across harmonics, so a width scales with its centre.
+fn notch_centres(plan: &NotchPlan, base_hz: f64, motor_hz: &[f64]) -> Vec<(f64, f64)> {
+    if !plan.enable || plan.freq <= 0.0 || plan.bw <= 0.0 {
+        return Vec::new();
+    }
+    let sources: Vec<f64> = if plan.opts & MULTI_SOURCE != 0 && plan.mode == 3 && !motor_hz.is_empty() {
+        motor_hz.to_vec()
+    } else {
+        vec![base_hz]
+    };
+    let mut out = Vec::new();
+    for source in sources {
+        for bit in 0..8 {
+            if plan.hmncs & (1 << bit) == 0 {
+                continue;
+            }
+            let centre = source * (bit + 1) as f64;
+            out.push((centre, centre * plan.bw / plan.freq));
+        }
+    }
+    out
+}
+
+fn plan_gain(plan: &NotchPlan, centres: &[(f64, f64)], lpf: f64, rate: f64, f: f64) -> (f64, f64) {
+    let mut gain = 1.0;
+    let mut phase = 0.0;
+    for (centre, bw) in centres {
+        let (g, p) = notch_response_att(*centre, *bw, plan.att, rate, f);
+        gain *= g;
+        phase += p;
+    }
+    if lpf > 0.0 {
+        let (g, p) = lpf_response(lpf, rate, f);
+        gain *= g;
+        phase += p;
+    }
+    (gain, phase)
+}
+
+/// The noise power above 20 Hz left after the filters.
+fn residual_power(plan: &NotchPlan, centres: &[(f64, f64)], lpf: f64, rate: f64, spectrum: &[(f64, f64)]) -> f64 {
+    spectrum.iter().filter(|(f, _)| *f >= 20.0).map(|(f, amp)| {
+        let (gain, _) = plan_gain(plan, centres, lpf, rate, *f);
+        amp * amp * gain * gain
+    }).sum()
+}
+
+fn plan_result(plan: &NotchPlan, centres: &[(f64, f64)], rate: f64, spectrum: &[(f64, f64)]) -> FilterSimResult {
+    let input: f64 = spectrum.iter().filter(|(f, _)| *f >= 20.0).map(|(_, amp)| amp * amp).sum();
+    let output = residual_power(plan, centres, plan.lpf, rate, spectrum);
+    let attenuation = if input > 1e-12 && output > 1e-12 { 10.0 * (input / output).log10() } else { 0.0 };
+    let (_, phase) = plan_gain(plan, centres, plan.lpf, rate, 30.0);
+    let delay_ms = (-phase / (2.0 * std::f64::consts::PI * 30.0) * 1000.0).max(0.0);
+    FilterSimResult {
+        noise_attenuation_db: (attenuation * 10.0).round() / 10.0,
+        phase_delay_at_30hz_ms: (delay_ms * 10.0).round() / 10.0,
+    }
+}
+
+/// The pre-filter batches with the notch frequency of their moment. A log without a gyro batch
+/// falls back to one batch: the averaged spectrum at the median notch frequency.
+struct BatchSet {
+    rate: f64,
+    hz: Vec<f64>,
+    /// Per batch: power per bin, the tracked notch base (Hz), and each motor's frequency (Hz).
+    rows: Vec<(Vec<f64>, Option<f64>, Vec<f64>)>,
+}
+
+impl BatchSet {
+    fn new(
+        scan: &GyroScan,
+        primary: Option<&Value>,
+        spectrum: &[(f64, f64)],
+        rate: f64,
+        tracked: &[(u64, f64)],
+        motor_rpm: &BTreeMap<u64, Vec<(u64, f64)>>,
+    ) -> Self {
+        let mut tracked = tracked.to_vec();
+        tracked.sort_by_key(|row| row.0);
+        let motors: Vec<Vec<(u64, f64)>> = motor_rpm.values().map(|rows| {
+            let mut rows = rows.clone();
+            rows.sort_by_key(|row| row.0);
+            rows
+        }).collect();
+        let group = primary.and_then(|view| view["instance"].as_u64()).and_then(|id| scan.groups.get(&id));
+        if let Some(group) = group.filter(|group| !group.power.is_empty()) {
+            let bins = group.power[0].1.len();
+            let hz = (0..bins).map(|i| group.rate * i as f64 / group.fft_n as f64).collect();
+            let rows = group.power.iter().filter(|(_, p)| p.len() == bins).map(|(t, p)| {
+                let at = nearest(&tracked, *t, 500_000);
+                let each = motors.iter().filter_map(|rows| nearest(rows, *t, 500_000).map(|rpm| rpm / 60.0)).collect();
+                (p.clone(), at, each)
+            }).collect();
+            return BatchSet { rate: group.rate, hz, rows };
+        }
+        BatchSet {
+            rate,
+            hz: spectrum.iter().map(|(f, _)| *f).collect(),
+            rows: vec![(spectrum.iter().map(|(_, a)| a * a).collect(), None, Vec::new())],
+        }
+    }
+
+    /// Power per bin left after the notches, summed over the batches. Each batch has the notch
+    /// where it was then: the tracked frequency, or each motor's with Multi-Source.
+    fn after_notches(&self, plan: &NotchPlan, fallback_hz: f64, fallback_motors: &[f64]) -> Vec<f64> {
+        let mut out = vec![0.0; self.hz.len()];
+        for (power, tracked, motors) in &self.rows {
+            let base = if plan.mode != 0 { tracked.unwrap_or(fallback_hz) } else { plan.freq };
+            let motors = if motors.is_empty() { fallback_motors } else { motors.as_slice() };
+            let centres = notch_centres(plan, base, motors);
+            for (i, f) in self.hz.iter().enumerate() {
+                if *f < 20.0 {
+                    continue;
+                }
+                let mut gain = 1.0;
+                for (centre, bw) in &centres {
+                    gain *= notch_response_att(*centre, *bw, plan.att, self.rate, *f).0;
+                }
+                out[i] += power[i] * gain * gain;
+            }
+        }
+        out
+    }
+
+    /// The noise power above 20 Hz after the notches and the gyro low-pass.
+    fn residual(&self, after_notches: &[f64], lpf: f64) -> f64 {
+        self.hz.iter().zip(after_notches).filter(|(f, _)| **f >= 20.0).map(|(f, p)| {
+            let g = if lpf > 0.0 { lpf_response(lpf, self.rate, *f).0 } else { 1.0 };
+            p * g * g
+        }).sum()
+    }
+
+    fn attenuation_db(&self, after_notches: &[f64], lpf: f64) -> f64 {
+        let input: f64 = self.rows.iter().map(|(p, _, _)| {
+            self.hz.iter().zip(p).filter(|(f, _)| **f >= 20.0).map(|(_, v)| *v).sum::<f64>()
+        }).sum();
+        let output = self.residual(after_notches, lpf);
+        let db = if input > 1e-18 && output > 1e-18 { 10.0 * (input / output).log10() } else { 0.0 };
+        (db * 10.0).round() / 10.0
+    }
+}
+
+/// The amplitude of the spectrum at `hz` and its bin width.
+fn spectrum_peak(spectrum: &[(f64, f64)], hz: f64) -> (f64, f64) {
+    let resolution = spectrum.windows(2).next().map(|w| w[1].0 - w[0].0).unwrap_or(1.0).max(1e-6);
+    (spectrum_peak_near(spectrum, hz, resolution * 2.0).0, resolution)
+}
+
+/// The largest amplitude within `half` Hz of `hz`.
+fn spectrum_peak_near(spectrum: &[(f64, f64)], hz: f64, half: f64) -> (f64, f64) {
+    spectrum.iter().filter(|(f, _)| (*f - hz).abs() <= half).fold((0.0, hz), |best, (f, amp)| if *amp > best.0 { (*amp, *f) } else { best })
 }
 
 /// Public API called by agent or catalog.

@@ -27,6 +27,7 @@ fn note_live(sample: &mut Sample) {
 }
 
 fn absorb_message(nums: &mut HashMap<String, f64>, msg: &MavMessage) {
+    flag_numbers(nums, msg);
     let Ok(value) = serde_json::to_value(msg) else { return };
     let Some(obj) = value.as_object() else { return };
     let Some(message) = obj.get("type").and_then(|v| v.as_str()) else { return };
@@ -56,9 +57,8 @@ fn absorb_message(nums: &mut HashMap<String, f64>, msg: &MavMessage) {
             }
             continue;
         }
-        // Bitflag fields serialize as {"bits": N}; keep N so flags such as
-        // SYS_STATUS health or EKF_STATUS_REPORT.flags reach the UI.
-        let Some(n) = item.as_f64().or_else(|| item.get("bits").and_then(|bits| bits.as_f64())) else { continue };
+        // Bitflag fields serialize as names ("A | B"); `flag_numbers` adds their numbers.
+        let Some(n) = item.as_f64() else { continue };
         if !n.is_finite() {
             continue;
         }
@@ -66,6 +66,25 @@ fn absorb_message(nums: &mut HashMap<String, f64>, msg: &MavMessage) {
         if let Some(axis) = axis {
             nums.insert(format!("{message}.{axis}.{key}"), n);
         }
+    }
+}
+
+/// Bitflag fields as numbers, so flags such as SYS_STATUS health or EKF_STATUS_REPORT.flags
+/// reach the UI. In JSON they are flag names, which the live numbers cannot hold.
+fn flag_numbers(nums: &mut HashMap<String, f64>, msg: &MavMessage) {
+    let mut put = |key: &str, bits: u64| {
+        nums.insert(key.to_string(), bits as f64);
+    };
+    match msg {
+        MavMessage::SYS_STATUS(v) => {
+            put("SYS_STATUS.onboard_control_sensors_present", v.onboard_control_sensors_present.bits() as u64);
+            put("SYS_STATUS.onboard_control_sensors_enabled", v.onboard_control_sensors_enabled.bits() as u64);
+            put("SYS_STATUS.onboard_control_sensors_health", v.onboard_control_sensors_health.bits() as u64);
+        }
+        MavMessage::EKF_STATUS_REPORT(v) => put("EKF_STATUS_REPORT.flags", v.flags.bits() as u64),
+        MavMessage::ESTIMATOR_STATUS(v) => put("ESTIMATOR_STATUS.flags", v.flags.bits() as u64),
+        MavMessage::HEARTBEAT(v) => put("HEARTBEAT.base_mode", v.base_mode.bits() as u64),
+        _ => {}
     }
 }
 

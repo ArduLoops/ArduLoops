@@ -79,6 +79,7 @@ fn send_mission_item(conn: &dyn MavConnection<MavMessage>, st: &LinkState, item:
             frame,
             current: 0,
             autocontinue: 1,
+            ..Default::default()
         }),
     );
 }
@@ -97,6 +98,7 @@ fn upload_mission(
             &MavMessage::MISSION_CLEAR_ALL(MISSION_CLEAR_ALL_DATA {
                 target_system: st.target_system,
                 target_component: st.target_component,
+                ..Default::default()
             }),
         );
     } else {
@@ -106,6 +108,7 @@ fn upload_mission(
                 count: items.len() as u16,
                 target_system: st.target_system,
                 target_component: st.target_component,
+                ..Default::default()
             }),
         );
     }
@@ -206,7 +209,7 @@ fn apply_cmd(
             while Instant::now() < deadline {
                 match conn.recv() {
                     Ok((hdr, msg)) => {
-                        let ack = if hdr.system_id == st.target_system && hdr.component_id == st.target_component {
+                        let ack = if hdr.system_id == u32::from(st.target_system) && hdr.component_id == st.target_component {
                             if let MavMessage::COMMAND_ACK(v) = &msg {
                                 (v.command == MavCmd::MAV_CMD_PREFLIGHT_CALIBRATION).then_some(v.result as u8)
                             } else { None }
@@ -297,6 +300,7 @@ fn apply_cmd(
                 started: now,
                 last_data: now,
                 last_request: now,
+                requested: (0, 0),
                 peek_head,
                 peek_tail,
             });
@@ -347,6 +351,7 @@ fn apply_cmd(
                 started: now,
                 last_data: now,
                 last_request: now,
+                requested: (0, 0),
                 peek_head: 0,
                 peek_tail: 0,
             });
@@ -359,7 +364,7 @@ fn apply_cmd(
                 param_index: index,
                 target_system: st.target_system,
                 target_component: st.target_component,
-                param_id: [0; 16],
+                param_id: [0u8; 16].into(),
             }),
         ),
         Cmd::Init { params } => {
@@ -734,7 +739,7 @@ fn wait_cmd_ack(
     while Instant::now() < deadline {
         match conn.recv() {
             Ok((hdr, msg)) => {
-                let ack = if hdr.system_id == st.target_system && hdr.component_id == st.target_component {
+                let ack = if hdr.system_id == u32::from(st.target_system) && hdr.component_id == st.target_component {
                     if let MavMessage::COMMAND_ACK(v) = &msg {
                         (v.command == command).then_some(v.result as u8)
                     } else {
@@ -779,6 +784,7 @@ fn compass_mot(
         let message = MavMessage::COMMAND_ACK(COMMAND_ACK_DATA {
             command: MavCmd::MAV_CMD_PREFLIGHT_CALIBRATION,
             result: MavResult::MAV_RESULT_ACCEPTED,
+            ..Default::default()
         });
         if conn.send(&header(), &message).is_err() {
             return "Could not send calibration command".into();
@@ -907,7 +913,7 @@ fn compass_cal(
     while Instant::now() < deadline {
         match conn.recv() {
             Ok((hdr, msg)) => {
-                let ack = if hdr.system_id == st.target_system && hdr.component_id == st.target_component {
+                let ack = if hdr.system_id == u32::from(st.target_system) && hdr.component_id == st.target_component {
                     if let MavMessage::COMMAND_ACK(v) = &msg {
                         (v.command == command).then_some(v.result as u8)
                     } else {
@@ -953,7 +959,7 @@ fn compass_cal(
 fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
     // Ignore telemetry from other vehicles and GCS processes on a shared UDP link.
     if !matches!(&msg, MavMessage::HEARTBEAT(_))
-        && (header.system_id != st.target_system || header.component_id != st.target_component)
+        && (header.system_id != u32::from(st.target_system) || header.component_id != st.target_component)
     {
         return;
     }
@@ -966,6 +972,10 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             // Set: the parameter file can start without waiting. Clear proves nothing; some
             // links clear it and still carry file transfer.
             st.ftp_capable = Some(v.capabilities.contains(MavProtocolCapability::MAV_PROTOCOL_CAPABILITY_FTP));
+            if let Some(uid) = mcu_uid(&v.uid2) {
+                st.sample.boot_uid = uid;
+                st.sample.log_dir = log_dir_key(st);
+            }
             log::info!("params: AUTOPILOT_VERSION ftp={:?}", st.ftp_capable);
         }
         MavMessage::MAG_CAL_PROGRESS(v) => note_mag_progress(
@@ -1018,7 +1028,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
         MavMessage::STATUSTEXT(v) => Some((
             "STATUSTEXT",
             serde_json::json!({
-                "severity": format!("{:?}", v.severity), "text": param_name(&v.text)
+                "severity": format!("{:?}", v.severity), "text": param_name(&v.text[..])
             }),
         )),
         _ => None,
@@ -1060,7 +1070,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                 return;
             }
             if header.system_id != 0 {
-                st.target_system = header.system_id;
+                st.target_system = u8::try_from(header.system_id).unwrap_or(st.target_system);
             }
             st.sample.log_dir = log_dir_key(st);
             if header.component_id != 0 {
@@ -1120,8 +1130,10 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             nav_roll,
             nav_pitch,
             alt_error,
+            wp_dist,
             ..
         }) => {
+            st.sample.wp_dist = Some(wp_dist as f64);
             if st.sample.frame == "plane" || !st.have_att_target {
                 st.sample.tar = Some(nav_roll as f64);
                 st.sample.pitch_tar = Some(nav_pitch as f64);
@@ -1218,7 +1230,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                 st.sample.home_alt_m = Some(altitude as f64 / 1000.0);
             }
         }
-        MavMessage::MISSION_CURRENT(MISSION_CURRENT_DATA { seq }) => {
+        MavMessage::MISSION_CURRENT(MISSION_CURRENT_DATA { seq, .. }) => {
             st.sample.wp_seq = Some(seq);
         }
         MavMessage::VFR_HUD(VFR_HUD_DATA {
@@ -1322,10 +1334,16 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             let Some(active) = st.active_log_download.as_mut() else {
                 return;
             };
-            if id != active.id || count == 0 {
+            if id != active.id {
                 return;
             }
             let offset = ofs as usize;
+            if count == 0 {
+                // ArduPilot's end of file: nothing more can be read here. Asking again only
+                // gets the same answer until the download times out.
+                log_data_ended(st, offset);
+                return;
+            }
             if offset >= active.size {
                 return;
             }
@@ -1347,7 +1365,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             update_log_download_report(st, String::new());
         }
         MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity, text, .. }) => {
-            let msg = param_name(&text);
+            let msg = param_name(&text[..]);
             if msg.is_empty() {
                 return;
             }
@@ -1372,7 +1390,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             param_index,
             ..
         }) => {
-            let name = param_name(&param_id);
+            let name = param_name(&param_id[..]);
             if name.is_empty() {
                 return;
             }
@@ -1425,18 +1443,35 @@ fn apply_param(st: &mut LinkState, name: &str, val: f64, index: u16, count: u16)
     }
 }
 
-fn boot_identity(message: &str) -> Option<(String, String)> {
-    let mut words = message.split_whitespace();
-    let name = words.next()?;
-    if !name.contains('_') || name.len() > 64 {
+/// The board UID from AUTOPILOT_VERSION.uid2: the 96-bit MCU UID that ChibiOS puts there
+/// (`get_system_id_unformatted`), written as the boot banner writes it, three 32-bit words in
+/// hex (`004B0039 30345115 37393339` -> `004B00393034511537393339`), so the key matches the
+/// banner in the board's DataFlash logs. SITL fills all 18 bytes with its machine id text,
+/// which is not a board.
+fn mcu_uid(uid2: &[u8; 18]) -> Option<String> {
+    let (uid, rest) = uid2.split_at(12);
+    if rest.iter().any(|b| *b != 0) || uid.iter().all(|b| *b == 0) {
         return None;
     }
-    let uid = words
-        .filter(|part| {
-            part.len() >= 4 && part.len() <= 16 && part.bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
-        .collect::<String>();
-    Some((name.to_owned(), uid))
+    Some(uid.chunks(4).flat_map(|word| word.iter().rev()).map(|b| format!("{b:02X}")).collect())
+}
+
+/// The board line of the boot banner: `<board> XXXXXXXX XXXXXXXX XXXXXXXX`, the short board
+/// name and the 96-bit MCU UID (AP_HAL_ChibiOS `Util::get_system_id`). Many board names have no
+/// underscore (DAKEFPVH743, MatekH743); the exact UID words keep the other banner lines out.
+pub(crate) fn boot_identity(message: &str) -> Option<(String, String)> {
+    let mut words = message.split_whitespace();
+    let name = words.next()?;
+    let name_ok = name.len() <= 23
+        && name.bytes().any(|byte| byte.is_ascii_alphabetic())
+        && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+    if !name_ok {
+        return None;
+    }
+    let parts: Vec<&str> = words.collect();
+    let uid_ok = (2..=4).contains(&parts.len())
+        && parts.iter().all(|part| part.len() == 8 && part.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    uid_ok.then(|| (name.to_owned(), parts.concat()))
 }
 
 fn msg_name(msg: &MavMessage) -> &'static str {

@@ -32,6 +32,7 @@ const MSG_MAG_CAL_REPORT: f32 = 192.0;
 const MSG_EKF_STATUS_REPORT: f32 = 193.0;
 const MSG_SYS_STATUS: f32 = 1.0;
 const MSG_BATTERY_STATUS: f32 = 147.0;
+const MSG_AHRS2: f32 = 178.0;
 const LOG_BLOCK: usize = 90;
 const MAX_LOG_BYTES: usize = 512 * 1024 * 1024;
 
@@ -78,6 +79,8 @@ struct ActiveLogDownload {
     started: Instant,
     last_data: Instant,
     last_request: Instant,
+    /// The byte range [start, end) of the last LOG_REQUEST_DATA.
+    requested: (usize, usize),
     /// Bytes kept from the start. Zero means the whole file is being downloaded.
     peek_head: usize,
     peek_tail: usize,
@@ -209,6 +212,9 @@ pub struct Sample {
     /// MISSION_CURRENT sequence, including the home item at 0.
     #[serde(default)]
     pub wp_seq: Option<u16>,
+    /// NAV_CONTROLLER_OUTPUT distance to the active waypoint, metres.
+    #[serde(default)]
+    pub wp_dist: Option<f64>,
     pub thr_out: Option<f64>,
     /// Rangefinder distance, metres. DISTANCE_SENSOR is centimetres on the wire.
     pub rng_m: Option<f64>,
@@ -349,6 +355,7 @@ impl Sample {
             home_lon: None,
             home_alt_m: None,
             wp_seq: None,
+            wp_dist: None,
             thr_out: None,
             rng_m: None,
             rng_v: None,

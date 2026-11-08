@@ -4,8 +4,10 @@ import { useT } from "../i18n/i18n";
 import { detachWindow } from "../lib/detach";
 import { DetachButton } from "./DetachButton";
 
-export type ChartLine = { name: string; x: number[]; y: number[]; hue?: number; dash?: string };
-export type ChartAxis = { label: string; lines: ChartLine[] };
+/** `faint`: a reference line drawn thin and half transparent, such as the spectrum before the filters. */
+export type ChartLine = { name: string; x: number[]; y: number[]; hue?: number; dash?: string; faint?: boolean };
+/** `range` and `dtick` fix an axis that should not autoscale, such as a filter gain in dB. */
+export type ChartAxis = { label: string; lines: ChartLine[]; range?: [number, number]; dtick?: number };
 export type ChartHeat = { y_label: string; z_label: string; z_min?: number; z_max?: number; x: number[]; y: number[]; z: number[][] };
 export type ChartSpec = { title: string; x_label: string; axes: ChartAxis[]; heatmap?: ChartHeat; slug?: string };
 
@@ -425,6 +427,8 @@ export function ChartWindow({ chart, onClose, detached = false }: { chart: Chart
             gridcolor: index === 0 ? "#2a3140" : "transparent",
             zerolinecolor: "#2a3140",
             ...(index > 0 ? { overlaying: "y", side: "right" } : {}),
+            ...(axis.range ? { range: axis.range, autorange: false } : {}),
+            ...(axis.dtick ? { dtick: axis.dtick } : {}),
           };
         }
         for (const line of axis.lines) {
@@ -437,9 +441,10 @@ export function ChartWindow({ chart, onClose, detached = false }: { chart: Chart
             yaxis: index === 0 ? "y" : "y2",
             line: {
               color: hasHeat ? "#f4f7fb" : (typeof line.hue === "number" ? COLORS[line.hue % COLORS.length] : COLORS[color % COLORS.length]),
-              width: hasHeat ? 1.2 : line.dash === "dot" ? 1.2 : 1.6,
+              width: hasHeat ? 1.2 : line.faint ? 1.1 : line.dash === "dot" ? 1.2 : 1.6,
               dash: line.dash || "solid",
             },
+            ...(line.faint ? { opacity: 0.5 } : {}),
           });
           color += typeof line.hue === "number" ? 0 : 1;
         }

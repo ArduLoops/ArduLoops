@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
 import { askAssistant } from "../lib/assistantAsk";
-import { AUX_NAMES, STICKS, channelOf, endsOf, pnum, stickPos, sticksCalibrated, type Stick } from "../lib/radio";
+import { AUX_NAMES, AUX_PICK, STICKS, channelOf, endsOf, pnum, stickPos, sticksCalibrated, type Stick } from "../lib/radio";
 import { noteUi, sameParam, send, writeParam } from "../mav/cmd";
 import { getLatest, getSetupSnapshot, getSnapshot, subscribe } from "../mav/store";
 import { type WizardClose } from "../wizards/close";
@@ -15,6 +15,9 @@ import { StepPreArm } from "./StepPreArm";
  * calibrated, each stick moves the way ArduPilot expects. The channels follow as a table. The mode switch, the radio
  * failsafe, aux functions and the receiver port are elsewhere.
  */
+
+/** The picker's value for the flight mode switch: not an RCx_OPTION, it moves FLTMODE_CH. */
+const MODE_PICK = -1;
 
 const okPwm = (v: number | undefined): v is number => typeof v === "number" && v >= 800 && v <= 2200;
 
@@ -110,6 +113,37 @@ export function RadioStep() {
   const modeCh = Math.round(pnum(params, "FLTMODE_CH") ?? pnum(params, "MODE_CH") ?? 5);
   const chans = Math.max(8, typeof count === "number" ? Math.min(16, count) : 8);
   const stickOf = (ch: number) => STICKS.find((s) => channelOf(params, s.key) === ch);
+  const [fnBusy, setFnBusy] = useState(false);
+  const [fnError, setFnError] = useState("");
+  const optionOf = (ch: number) => Math.round(pnum(params, `RC${ch}_OPTION`) ?? 0);
+  /** The other channel that already has this aux function, if any. */
+  const usedOn = (n: number, ch: number) => {
+    for (let c = 1; c <= 16; c++) if (c !== ch && optionOf(c) === n) return c;
+    return 0;
+  };
+  const pickList = (current: number) => {
+    const list = AUX_PICK[sample.frame === "plane" ? "plane" : "copter"];
+    const all = current > 0 && !list.includes(current) ? [current, ...list] : list;
+    return [...all].sort((a, b) => a - b);
+  };
+  /**
+   * Gives a channel a function. An aux function moves here from any channel that had it (ArduPilot refuses to arm with
+   * one twice); Flight mode moves FLTMODE_CH here and clears this channel's aux function.
+   */
+  async function setFunction(ch: number, value: number) {
+    const writes: [string, number][] = [];
+    if (value === MODE_PICK) {
+      writes.push([`RC${ch}_OPTION`, 0], ["FLTMODE_CH", ch]);
+    } else {
+      if (value > 0) for (let c = 1; c <= 16; c++) if (c !== ch && optionOf(c) === value) writes.push([`RC${c}_OPTION`, 0]);
+      writes.push([`RC${ch}_OPTION`, value]);
+    }
+    setFnBusy(true);
+    setFnError("");
+    const err = await writeList(writes);
+    setFnBusy(false);
+    if (err) setFnError(err);
+  }
   const radioStatus = typeof nums["RADIO_STATUS.rssi"] === "number" ? {
     // SiK reports 0..254 counts; its manual gives dBm ≈ counts / 1.9 − 127.
     rssi: Math.round((nums["RADIO_STATUS.rssi"] as number) / 1.9 - 127),
@@ -163,7 +197,8 @@ export function RadioStep() {
       </div>
       {sending ? (
         <>
-          <h4 className="sov-sect pas-sect"><span>{t("Channels")}</span><span className="pas-src">{t("what each channel does · aux functions are set by the assistant")}</span></h4>
+          <h4 className="sov-sect pas-sect"><span>{t("Channels")}</span><span className="pas-src">{t("what each channel does · sticks 1–4 follow RCMAP")}</span></h4>
+          {fnError ? <div className="mw-note warn">{Icon.warn()}<span>{fnError}</span></div> : null}
           <div className="cps-table" role="table">
             <div className="rs-tr head" role="row"><span>CH</span><span>{t("Function")}</span><span>{t("Now")}</span><span /><span>{t("Min · trim · max")}</span></div>
             {Array.from({ length: chans }, (_, i) => i + 1).map((ch) => {
@@ -171,12 +206,31 @@ export function RadioStep() {
               const v = rc[ch - 1];
               const stick = stickOf(ch);
               const option = Math.round(pnum(params, `RC${ch}_OPTION`) ?? 0);
-              const use = stick ? t(stick.name) : ch === modeCh ? t("Flight mode") : option ? t(AUX_NAMES[option] ?? "Option {n}", { n: option }) : "—";
+              const use = stick ? t(stick.name) : ch === modeCh ? t("Flight mode") : option ? AUX_NAMES[option] ?? `RC${ch}_OPTION ${option}` : "—";
+              const current = ch === modeCh ? MODE_PICK : option;
               const p = (x: number) => Math.max(0, Math.min(100, ((x - 900) / 1200) * 100));
               return (
                 <div key={ch} className={`rs-tr${use === "—" ? " off" : ""}`} role="row">
                   <span className="cps-n">{ch}</span>
-                  <span>{use}{e.reversed ? <em className="rs-rev">{t("reversed")}</em> : null}</span>
+                  <span className="rs-fn">
+                    {stick ? use : (
+                      <select
+                        aria-label={t("Function of channel {n}", { n: ch })}
+                        value={current}
+                        disabled={!ready || fnBusy || ch === modeCh}
+                        title={ch === modeCh ? t("Pick Flight mode on another channel to free this one.") : undefined}
+                        onChange={(ev) => void setFunction(ch, Number(ev.target.value))}
+                      >
+                        <option value={0}>—</option>
+                        <option value={MODE_PICK}>{t("Flight mode")}</option>
+                        {pickList(current).map((n) => {
+                          const elsewhere = usedOn(n, ch);
+                          return <option key={n} value={n}>{`${n}: ${AUX_NAMES[n] ?? "?"}` + (elsewhere ? ` · CH${elsewhere}` : "")}</option>;
+                        })}
+                      </select>
+                    )}
+                    {e.reversed ? <em className="rs-rev">{t("reversed")}</em> : null}
+                  </span>
                   <span className="rs-bar"><i style={{ left: `${p(e.min)}%`, width: `${p(e.max) - p(e.min)}%` }} /><b style={{ left: `${p(e.trim)}%` }} />{okPwm(v) ? <em style={{ left: `${p(v)}%` }} /> : null}</span>
                   <span className="mono">{okPwm(v) ? v : "—"}</span>
                   <span className="mw-dim">{`${Math.round(e.min)} · ${Math.round(e.trim)} · ${Math.round(e.max)}`}</span>

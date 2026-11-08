@@ -7,7 +7,7 @@ fn gcs_heartbeat() -> MavMessage {
         mavtype: MavType::MAV_TYPE_GCS,
         autopilot: MavAutopilot::MAV_AUTOPILOT_INVALID,
         base_mode: MavModeFlag::empty(),
-        system_status: mavlink::ardupilotmega::MavState::MAV_STATE_ACTIVE,
+        system_status: mavlink::dialects::ardupilotmega::MavState::MAV_STATE_ACTIVE,
         mavlink_version: 3,
     })
 }
@@ -187,6 +187,8 @@ fn send_rc(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
             chan8_raw: ch[7],
             target_system: st.target_system,
             target_component: st.target_component,
+            // chan9..18 = 0: not overridden, as when the fields were not sent.
+            ..Default::default()
         }),
     );
 }
@@ -212,6 +214,8 @@ fn reboot_fc(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
 static REBOOT_PHASE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 static REBOOT_DEADLINE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static REBOOT_GAP_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// When the board came back after the last reboot we asked for (wall ms), 0 before any.
+static REBOOT_BACK_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 const REBOOT_WAIT_MS: u64 = 60_000;
 
 fn wall_ms() -> u64 {
@@ -249,7 +253,15 @@ fn reboot_heartbeat(heartbeat_at: f64) {
     use std::sync::atomic::Ordering;
     if REBOOT_PHASE.load(Ordering::Relaxed) == 2 && (heartbeat_at * 1000.0) as u64 > REBOOT_GAP_MS.load(Ordering::Relaxed) + 300 {
         REBOOT_PHASE.store(0, Ordering::Relaxed);
+        REBOOT_BACK_MS.store(wall_ms(), Ordering::Relaxed);
     }
+}
+
+/// Wall seconds when the board came back after the last reboot this app sent, or 0. A fast
+/// board (an H7 over a UDP radio) can be silent for less than the 3 s that marks a link as
+/// stale, so a caller waiting for the reboot reads this instead of watching for a drop.
+pub(crate) fn reboot_back_at() -> f64 {
+    REBOOT_BACK_MS.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1000.0
 }
 
 fn reboot_to_bootloader(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {

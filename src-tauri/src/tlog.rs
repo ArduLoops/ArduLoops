@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use mavlink::ardupilotmega::MavMessage;
+use mavlink::dialects::ardupilotmega::MavMessage;
 use mavlink::{write_versioned_msg, MavConnection, MavHeader, MavlinkVersion};
 use serde_json::{json, Value};
 
@@ -254,7 +254,7 @@ impl LoggedConn {
 impl MavConnection<MavMessage> for LoggedConn {
     fn recv(&self) -> Result<(MavHeader, MavMessage), mavlink::error::MessageReadError> {
         let got = self.inner.recv()?;
-        note(self.inner.get_protocol_version(), &got.0, &got.1);
+        note(self.inner.protocol_version(), &got.0, &got.1);
         Ok(got)
     }
 
@@ -264,7 +264,7 @@ impl MavConnection<MavMessage> for LoggedConn {
         data: &MavMessage,
     ) -> Result<usize, mavlink::error::MessageWriteError> {
         let n = self.inner.send(header, data)?;
-        note(self.inner.get_protocol_version(), header, data);
+        note(self.inner.protocol_version(), header, data);
         Ok(n)
     }
 
@@ -272,15 +272,32 @@ impl MavConnection<MavMessage> for LoggedConn {
         self.inner.set_protocol_version(version);
     }
 
-    fn get_protocol_version(&self) -> MavlinkVersion {
-        self.inner.get_protocol_version()
+    fn protocol_version(&self) -> MavlinkVersion {
+        self.inner.protocol_version()
+    }
+    fn recv_raw(&self) -> Result<mavlink::MAVLinkMessageRaw, mavlink::error::MessageReadError> {
+        self.inner.recv_raw()
+    }
+    fn try_recv(&self) -> Result<(MavHeader, MavMessage), mavlink::error::MessageReadError> {
+        let got = self.inner.try_recv()?;
+        note(self.inner.protocol_version(), &got.0, &got.1);
+        Ok(got)
+    }
+    fn send_raw(&self, data: &mavlink::MAVLinkMessageRaw) -> Result<usize, mavlink::error::MessageWriteError> {
+        self.inner.send_raw(data)
+    }
+    fn set_allow_recv_any_version(&mut self, allow: bool) {
+        self.inner.set_allow_recv_any_version(allow);
+    }
+    fn allow_recv_any_version(&self) -> bool {
+        self.inner.allow_recv_any_version()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mavlink::ardupilotmega::{
+    use mavlink::dialects::ardupilotmega::{
         MavAutopilot, MavModeFlag, MavState, MavType, HEARTBEAT_DATA,
     };
     use std::io::Read;

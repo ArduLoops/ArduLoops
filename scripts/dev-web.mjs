@@ -1,5 +1,6 @@
 import { execSync, spawn } from "node:child_process";
-import { existsSync, readFileSync, watch } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -187,15 +188,47 @@ apiProc = startApi();
 startBridge();
 startVite();
 
+// Windows reports change events for files whose bytes did not change (an indexer, antivirus,
+// an editor touching the file). A restart kills the bridge mid log download, so restart only
+// when the content is new.
+const seen = new Map();
+function contentHash(path) {
+  try {
+    return createHash("sha1").update(readFileSync(path)).digest("hex");
+  } catch {
+    return "gone";
+  }
+}
+function changed(path) {
+  const next = contentHash(path);
+  if (seen.get(path) === next) return false;
+  seen.set(path, next);
+  return true;
+}
+function remember(dir, rel = "") {
+  for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
+    const name = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      if (entry.name === "target" || entry.name.startsWith("target") || entry.name === "gen" || entry.name === "node_modules") continue;
+      remember(dir, name);
+    } else if (shouldReload(name)) {
+      seen.set(join(dir, name), contentHash(join(dir, name)));
+    }
+  }
+}
+
 const tauriDir = join(root, "src-tauri");
+remember(tauriDir);
 watch(tauriDir, { recursive: true }, (_event, filename) => {
   if (stopping || !shouldReload(filename ?? "")) return;
+  if (!changed(join(tauriDir, filename))) return;
   scheduleBridgeRestart(filename);
 });
 const skillFile = join(root, "skills", "ROOT.md");
 if (existsSync(skillFile)) {
+  seen.set(skillFile, contentHash(skillFile));
   watch(skillFile, () => {
-    if (stopping) return;
+    if (stopping || !changed(skillFile)) return;
     scheduleBridgeRestart("skills/ROOT.md");
   });
 }

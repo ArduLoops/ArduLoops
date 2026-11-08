@@ -155,7 +155,7 @@ fn scan_gyro(bytes: &[u8]) -> GyroScan {
             }
         } else if fmt.name == "PARM" {
             if let (Some(name), Some(value)) = (field_str(fmt, values, "Name"), field_f64(fmt, values, "Value")) {
-                if value.is_finite() && (name.starts_with("INS_HNTCH_") || name.starts_with("INS_HNTC2_")) {
+                if value.is_finite() && (name.starts_with("INS_HNTCH_") || name.starts_with("INS_HNTC2_") || name == "INS_GYRO_FILTER") {
                     parms.insert(name, value);
                 }
             }
@@ -192,15 +192,21 @@ fn scan_gyro(bytes: &[u8]) -> GyroScan {
             spec: [Vec::new(), Vec::new(), Vec::new()],
             ridge: Vec::new(),
             frames: Vec::new(),
+            power: Vec::new(),
         });
-        if (group.rate - batch.rate).abs() > 1.0 || group.fft_n != fft_n {
+        // The measured sample rate drifts over a flight (2003 to 1993 Hz in one log). A batch
+        // within 2% joins the average; the group's rate is the mean of the batches in it.
+        if (group.rate - batch.rate).abs() > group.rate * 0.02 || group.fft_n != fft_n {
             continue;
         }
         let mut mags: [Vec<f64>; 3] = [Vec::new(), Vec::new(), Vec::new()];
         for axis in 0..3 {
             mags[axis] = magnitude(&series[axis], fft_n);
         }
-        let column = heat_amps(&mags, batch.rate, fft_n);
+        let column = heat_amps(&mags);
+        let power: Vec<f64> = (0..mags[0].len())
+            .map(|i| (0..3).map(|axis| mags[axis].get(i).map(|m| m * m).unwrap_or(0.0)).sum())
+            .collect();
         let min_bin = ((20.0 * fft_n as f64 / batch.rate).ceil() as usize).clamp(1, mags[0].len().saturating_sub(1));
         let env = |k: usize| mags[0][k].max(mags[1].get(k).copied().unwrap_or(0.0)).max(mags[2].get(k).copied().unwrap_or(0.0));
         let mut ranked = Vec::new();
@@ -244,6 +250,8 @@ fn scan_gyro(bytes: &[u8]) -> GyroScan {
             }
         }
         group.frames.push(SpecFrame { time_us: batch.time_us, amp: column });
+        group.power.push((batch.time_us, power));
+        group.rate = (group.rate * group.used as f64 + batch.rate) / (group.used as f64 + 1.0);
         group.used += 1;
     }
     GyroScan { groups, throttle, rpm, notch, parms }
@@ -369,6 +377,8 @@ struct GyroGroup {
     spec: [Vec<f64>; 3],
     ridge: Vec<RidgePoint>,
     frames: Vec<SpecFrame>,
+    /// Per batch: its time and the power per FFT bin summed over X, Y, and Z.
+    power: Vec<(u64, Vec<f64>)>,
 }
 
 fn public_capture(view: &Value) -> Value {
@@ -690,6 +700,15 @@ fn max_in_window(series: &[(u64, f64)], t: u64, window: u64) -> Option<f64> {
     series[start..end].iter().map(|row| row.1).filter(|v| v.is_finite() && *v > 0.0).reduce(f64::max)
 }
 
+/// `magnitude` gives |FFT|/N with a Hann window. WebTools FilterReview scales the same FFT by 2/N
+/// and by 1/mean(window) = 2, so its amplitude is 4 times this.
+const WEBTOOLS_AMPLITUDE: f64 = 4.0;
+
+/// 20·log10 of the amplitude in the logged gyro units, as WebTools FilterReview draws it.
+fn db_abs(mag: f64) -> f64 {
+    20.0 * (mag * WEBTOOLS_AMPLITUDE).max(1e-9).log10()
+}
+
 fn db_rel(amp: f64, reference: f64) -> f64 {
     if amp <= 1e-12 || reference <= 1e-12 {
         return -80.0;
@@ -814,7 +833,8 @@ fn picture_bytes(bytes: &[u8], kind: &str, spec: &Value) -> Value {
             let Some(primary) = scan.groups.get(&primary_id) else {
                 return json!({ "ok": false, "error": "no gyro batch in this log" });
             };
-            spectrum_chart(primary, post_id.and_then(|id| scan.groups.get(&id)), &scan.parms, title)
+            let tracked = tracked_notch_hz(primary, &scan.notch);
+            spectrum_chart(primary, post_id.and_then(|id| scan.groups.get(&id)), &scan.parms, tracked, title)
         }
         "spectrogram" => {
             let Some(primary) = scan.groups.get(&primary_id) else {
@@ -840,18 +860,22 @@ fn picture_bytes(bytes: &[u8], kind: &str, spec: &Value) -> Value {
     out
 }
 
-fn spectrum_chart(group: &GyroGroup, post: Option<&GyroGroup>, parms: &BTreeMap<String, f64>, title: &str) -> Option<(String, Value, String)> {
-    let reference = capture_peak(group);
+fn spectrum_chart(group: &GyroGroup, post: Option<&GyroGroup>, parms: &BTreeMap<String, f64>, tracked: Option<f64>, title: &str) -> Option<(String, Value, String)> {
     let mut lines = Vec::new();
     let mut x0 = f64::INFINITY;
     let mut x1 = f64::NEG_INFINITY;
     for (axis, name) in ["X", "Y", "Z"].into_iter().enumerate() {
-        let Some((x, y)) = axis_line(group, axis, reference) else { continue };
+        let Some((x, y)) = axis_line(group, axis) else { continue };
         if let (Some(first), Some(last)) = (x.first(), x.last()) {
             x0 = x0.min(*first);
             x1 = x1.max(*last);
         }
-        lines.push(json!({ "name": name, "x": x, "y": y, "hue": axis }));
+        // Before the filters is the faint dashed reference when the filtered capture is there too.
+        if post.is_some() {
+            lines.push(json!({ "name": format!("{name} pre-filter"), "x": x, "y": y, "hue": axis, "dash": "dash", "faint": true }));
+        } else {
+            lines.push(json!({ "name": name, "x": x, "y": y, "hue": axis }));
+        }
     }
     if lines.is_empty() {
         return None;
@@ -859,52 +883,53 @@ fn spectrum_chart(group: &GyroGroup, post: Option<&GyroGroup>, parms: &BTreeMap<
     let mut note = String::from(concat!(
         "The chart is drawn under the reply. ",
         "x is frequency in Hz across the FFT bins. ",
-        "X, Y, and Z are dB on each gyro axis against the loudest bin of the raw pre-filter capture. ",
+        "X, Y, and Z are the amplitude on each gyro axis in dB, 20·log10 of the logged gyro units, averaged over every batch with a Hann window as WebTools FilterReview does. They are absolute, not against a peak; below 20 Hz is the aircraft's own motion. ",
         "The samples themselves are not in this text. ",
     ));
     if let Some(post) = post {
         let mut filtered = false;
         for (axis, name) in ["X", "Y", "Z"].into_iter().enumerate() {
-            let Some((x, y)) = axis_line(post, axis, reference) else { continue };
-            lines.push(json!({ "name": format!("{name} filtered"), "x": x, "y": y, "hue": axis, "dash": "dash" }));
+            let Some((x, y)) = axis_line(post, axis) else { continue };
+            lines.push(json!({ "name": format!("{name} post-filter"), "x": x, "y": y, "hue": axis }));
             filtered = true;
         }
         if filtered {
-            note.push_str("X filtered, Y filtered, and Z filtered are that scale on the filtered capture. ");
+            note.push_str("The faint dashed lines, named pre-filter, are the raw capture; the solid lines, named post-filter, are that scale on the filtered capture, what reaches the controller. ");
         }
     }
+    let mut filter_line = None;
+    let mut marks: Vec<Value> = Vec::new();
     if x0.is_finite() && x1 > x0 {
-        let mut marked = false;
-        let mut dynamic = false;
-        let mut att_defaulted = false;
-        let mut harmonics_defaulted = false;
-        let mut second = false;
-        for (prefix, label, hue) in [("HNTCH", "notch", 5), ("HNTC2", "notch 2", 3)] {
-            let Some(setup) = notch_setup(parms, prefix) else { continue };
-            let Some((x, y)) = notch_mark(&setup, x0, x1) else { continue };
-            lines.push(json!({ "name": label, "x": x, "y": y, "hue": hue, "dash": "dot" }));
-            marked = true;
-            dynamic |= setup.dynamic;
-            att_defaulted |= setup.att_defaulted;
-            harmonics_defaulted |= setup.harmonics_defaulted;
-            second |= label == "notch 2";
+        if let Some((notched, open)) = harmonic_marks(parms, tracked, x1) {
+            let segments = |hz: &[f64]| -> (Vec<Value>, Vec<Value>) {
+                let mut x = Vec::new();
+                let mut y = Vec::new();
+                for f in hz {
+                    x.extend([json!((f * 10.0).round() / 10.0), json!((f * 10.0).round() / 10.0), Value::Null]);
+                    y.extend([json!(-62.0), json!(4.0), Value::Null]);
+                }
+                (x, y)
+            };
+            if !notched.is_empty() {
+                let (x, y) = segments(&notched);
+                marks.push(json!({ "name": "harmonic, notched", "x": x, "y": y, "hue": 5, "faint": true }));
+            }
+            if !open.is_empty() {
+                let (x, y) = segments(&open);
+                marks.push(json!({ "name": "harmonic, not notched", "x": x, "y": y, "hue": 3, "dash": "dash", "faint": true }));
+            }
+            if !marks.is_empty() {
+                note.push_str("Vertical lines mark each multiple of the motor frequency the notch follows: harmonic, notched where INS_HNTCH_HMNCS covers it, harmonic, not notched where only the low-pass attenuates it. ");
+            }
         }
-        if marked {
-            note.push_str(concat!(
-                "A dotted line is the configured harmonic notch: each enabled harmonic, a triangle at its center, as wide as its bandwidth, down to the configured attenuation. ",
-                "It is the setting in the log, not the measured spectrum. ",
+        if let Some((x, y, parts)) = filter_curve(parms, tracked, group.rate, x0, x1) {
+            filter_line = Some(json!({ "name": "filters", "x": x, "y": y, "hue": 5, "dash": "dot" }));
+            note.push_str(&format!(
+                "The dotted line, on the right axis, is the gain of the gyro filters in dB ({}), like the WebTools FilterReview Bode plot: 0 passes, lower attenuates. It is computed from the parameters in the log, not measured. ",
+                parts.join(", "),
             ));
-            if second {
-                note.push_str("notch is the first, and notch 2 is the second. ");
-            }
-            if dynamic {
-                note.push_str("In a dynamic mode that center is the configured base frequency. ");
-            }
-            if att_defaulted {
-                note.push_str("Where ATT was not in the file, the depth is 40 dB, the firmware default. ");
-            }
-            if harmonics_defaulted {
-                note.push_str("Where harmonics were not in the file, only the base frequency is marked. ");
+            if let Some(hz) = tracked {
+                note.push_str(&format!("A dynamic notch sits where it tracked in flight, the median {hz:.1} Hz from FTNS. "));
             }
         }
     }
@@ -912,18 +937,25 @@ fn spectrum_chart(group: &GyroGroup, post: Option<&GyroGroup>, parms: &BTreeMap<
     Some((title.clone(), json!({
         "title": title,
         "x_label": "Hz",
-        "axes": [{ "label": "dB", "lines": lines }],
+        "axes": match filter_line {
+            Some(line) => {
+                let mut right = marks;
+                right.push(line);
+                json!([{ "label": "amplitude, dB", "lines": lines }, { "label": "filters, dB", "lines": right, "range": [-62.0, 4.0], "dtick": 10 }])
+            }
+            None => json!([{ "label": "amplitude, dB", "lines": lines }]),
+        },
     }), note))
 }
 
 fn spectrogram_chart(group: &GyroGroup, notch: &[(u64, f64)], title: &str) -> Option<(String, Value, String)> {
-    let (x, y, z) = heat_matrix(group)?;
+    let (x, y, z, top) = heat_matrix(group)?;
     let mut note = String::from(concat!(
         "The chart is drawn under the reply. ",
         "x is seconds from the first batch. ",
         "y is frequency in Hz. ",
-        "Color is dB against the loudest cell of the raw pre-filter capture. ",
-        "The color scale runs from -40 to 0. ",
+        "Color is the amplitude in dB, 20·log10 of the logged gyro units, as WebTools FilterReview draws it. ",
+        "The color scale runs 50 dB down from the loudest cell from 20 Hz up; below 20 Hz is the aircraft's own motion. ",
         "The samples themselves are not in this text. ",
     ));
     let mut axes = Vec::new();
@@ -938,8 +970,8 @@ fn spectrogram_chart(group: &GyroGroup, notch: &[(u64, f64)], title: &str) -> Op
         "heatmap": {
             "y_label": "Hz",
             "z_label": "dB",
-            "z_min": -40,
-            "z_max": 0,
+            "z_min": top - 50.0,
+            "z_max": top,
             "x": x,
             "y": y,
             "z": z,
@@ -948,31 +980,14 @@ fn spectrogram_chart(group: &GyroGroup, notch: &[(u64, f64)], title: &str) -> Op
     }), note))
 }
 
-fn capture_peak(group: &GyroGroup) -> f64 {
-    let bins = group.fft_n / 2;
-    let n = bins.min(group.spec.iter().map(|axis| axis.len()).max().unwrap_or(0));
-    if n < 2 {
-        return 0.0;
-    }
-    let (min_bin, _) = band_bins(group.rate, group.fft_n, n);
-    let used = group.used.max(1) as f64;
-    let mut peak = 0.0f64;
-    for axis in &group.spec {
-        for mag in axis.iter().take(n).skip(min_bin) {
-            peak = peak.max(*mag / used);
-        }
-    }
-    peak
-}
-
-fn axis_line(group: &GyroGroup, axis: usize, reference: f64) -> Option<(Vec<f64>, Vec<f64>)> {
+fn axis_line(group: &GyroGroup, axis: usize) -> Option<(Vec<f64>, Vec<f64>)> {
     let spec = group.spec.get(axis)?;
     let used = group.used.max(1) as f64;
     let n = (group.fft_n / 2).min(spec.len());
     if n < 2 {
         return None;
     }
-    let (min_bin, max_bin) = band_bins(group.rate, group.fft_n, n);
+    let (min_bin, max_bin) = display_bins(n);
     let span = (max_bin - min_bin).max(1);
     let cells = span.min(LINE_POINTS);
     let mut x = Vec::with_capacity(cells);
@@ -990,9 +1005,97 @@ fn axis_line(group: &GyroGroup, axis: usize, reference: f64) -> Option<(Vec<f64>
             }
         }
         x.push((group.rate * best_i as f64 / group.fft_n as f64 * 10.0).round() / 10.0);
-        y.push((db_rel(best, reference) * 10.0).round() / 10.0);
+        y.push((db_abs(best) * 10.0).round() / 10.0);
     }
     (x.len() >= 2).then_some((x, y))
+}
+
+/// Multiples of the motor frequency the notch follows, up to `top` Hz: those a harmonic notch
+/// covers and those it does not.
+fn harmonic_marks(parms: &BTreeMap<String, f64>, tracked: Option<f64>, top: f64) -> Option<(Vec<f64>, Vec<f64>)> {
+    let setup = notch_setup(parms, "HNTCH")?;
+    let base = if setup.dynamic { tracked.unwrap_or(setup.freq) } else { setup.freq };
+    if base <= 0.0 {
+        return None;
+    }
+    let mut notched = Vec::new();
+    let mut open = Vec::new();
+    for n in 1..=8u32 {
+        let hz = base * n as f64;
+        if hz > top {
+            break;
+        }
+        if setup.harmonics & (1 << (n - 1)) != 0 {
+            notched.push(hz);
+        } else {
+            open.push(hz);
+        }
+    }
+    Some((notched, open))
+}
+
+/// The median notch frequency the log recorded (FTNS) over this capture's batches.
+fn tracked_notch_hz(group: &GyroGroup, notch: &[(u64, f64)]) -> Option<f64> {
+    let (Some(first), Some(last)) = (group.frames.iter().map(|f| f.time_us).min(), group.frames.iter().map(|f| f.time_us).max()) else {
+        return None;
+    };
+    let mut values: Vec<f64> = notch.iter().filter(|(t, v)| *t >= first && *t <= last && *v > 0.0).map(|(_, v)| *v).collect();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(values[values.len() / 2])
+}
+
+/// The gyro filters' combined response in dB across [x0, x1]: each enabled harmonic of each
+/// harmonic notch (Q fixed across harmonics, so the width scales with the centre) and the static
+/// low-pass INS_GYRO_FILTER. A dynamic notch is centred where it tracked.
+fn filter_curve(parms: &BTreeMap<String, f64>, tracked: Option<f64>, rate: f64, x0: f64, x1: f64) -> Option<(Vec<f64>, Vec<f64>, Vec<String>)> {
+    let mut notches: Vec<(f64, f64, f64)> = Vec::new();
+    let mut parts = Vec::new();
+    for (prefix, label) in [("HNTCH", "harmonic notch"), ("HNTC2", "second harmonic notch")] {
+        let Some(setup) = notch_setup(parms, prefix) else { continue };
+        let base = if setup.dynamic { tracked.unwrap_or(setup.freq) } else { setup.freq };
+        let mut any = false;
+        for bit in 0..16 {
+            if setup.harmonics & (1 << bit) == 0 {
+                continue;
+            }
+            let center = base * (bit as f64 + 1.0);
+            if center >= rate * 0.5 {
+                continue;
+            }
+            notches.push((center, center * setup.bw / setup.freq, setup.att));
+            any = true;
+        }
+        if any {
+            parts.push(label.to_string());
+        }
+    }
+    let lpf = parms.get("INS_GYRO_FILTER").copied().filter(|hz| *hz > 0.0 && *hz < rate * 0.5);
+    if let Some(hz) = lpf {
+        parts.push(format!("low-pass {hz:.0} Hz"));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let points = 600;
+    let mut x = Vec::with_capacity(points);
+    let mut y = Vec::with_capacity(points);
+    for i in 0..points {
+        let f = x0 + (x1 - x0) * i as f64 / (points - 1) as f64;
+        let mut gain: f64 = 1.0;
+        for (center, bw, att) in &notches {
+            gain *= notch_response_att(*center, *bw, *att, rate, f).0;
+        }
+        if let Some(hz) = lpf {
+            gain *= lpf_response(hz, rate, f).0;
+        }
+        let db = if gain <= 1e-6 { -120.0 } else { 20.0 * gain.log10() };
+        x.push((f * 10.0).round() / 10.0);
+        y.push((db.max(-60.0) * 10.0).round() / 10.0);
+    }
+    Some((x, y, parts))
 }
 
 struct NotchSetup {
@@ -1001,8 +1104,6 @@ struct NotchSetup {
     att: f64,
     harmonics: u32,
     dynamic: bool,
-    att_defaulted: bool,
-    harmonics_defaulted: bool,
 }
 
 fn notch_setup(parms: &BTreeMap<String, f64>, prefix: &str) -> Option<NotchSetup> {
@@ -1015,75 +1116,16 @@ fn notch_setup(parms: &BTreeMap<String, f64>, prefix: &str) -> Option<NotchSetup
     if !(10.0..=495.0).contains(&freq) || !(5.0..=250.0).contains(&bw) {
         return None;
     }
-    let (att, att_defaulted) = match parms.get(&format!("INS_{prefix}_ATT")).copied() {
-        Some(value) if (5.0..=50.0).contains(&value) => (value, false),
-        _ => (40.0, true),
-    };
-    let (harmonics, harmonics_defaulted) = match parms.get(&format!("INS_{prefix}_HMNCS")).copied() {
-        Some(value) => (value.round().max(0.0) as u32, false),
-        None => (1, true),
-    };
+    let att = parms.get(&format!("INS_{prefix}_ATT")).copied().filter(|value| (5.0..=50.0).contains(value)).unwrap_or(40.0);
+    let harmonics = parms.get(&format!("INS_{prefix}_HMNCS")).copied().map(|value| value.round().max(0.0) as u32).unwrap_or(1);
     if harmonics == 0 {
         return None;
     }
     let dynamic = parms.get(&format!("INS_{prefix}_MODE")).copied().is_some_and(|mode| mode.round() as i32 != 0);
-    Some(NotchSetup { freq, bw, att, harmonics, dynamic, att_defaulted, harmonics_defaulted })
+    Some(NotchSetup { freq, bw, att, harmonics, dynamic })
 }
 
-fn notch_db(setup: &NotchSetup, hz: f64) -> f64 {
-    let mut depth = 0.0f64;
-    for bit in 0..16 {
-        if setup.harmonics & (1 << bit) == 0 {
-            continue;
-        }
-        let n = bit as f64 + 1.0;
-        let center = setup.freq * n;
-        let half = setup.bw * n / 2.0;
-        if half <= 0.0 {
-            continue;
-        }
-        let dist = (hz - center).abs();
-        if dist >= half {
-            continue;
-        }
-        depth = depth.min(-setup.att * (1.0 - dist / half));
-    }
-    depth
-}
-
-fn notch_mark(setup: &NotchSetup, x0: f64, x1: f64) -> Option<(Vec<f64>, Vec<f64>)> {
-    let mut marks = vec![x0, x1];
-    let mut inside = false;
-    for bit in 0..16 {
-        if setup.harmonics & (1 << bit) == 0 {
-            continue;
-        }
-        let n = bit as f64 + 1.0;
-        let center = setup.freq * n;
-        let half = setup.bw * n / 2.0;
-        if center + half < x0 || center - half > x1 {
-            continue;
-        }
-        inside = true;
-        for hz in [center - half, center, center + half] {
-            if (x0..=x1).contains(&hz) {
-                marks.push(hz);
-            }
-        }
-    }
-    if !inside {
-        return None;
-    }
-    marks.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    marks.dedup_by(|a, b| (*a - *b).abs() < 0.05);
-    if marks.len() < 2 {
-        return None;
-    }
-    let y = marks.iter().map(|hz| (notch_db(setup, *hz) * 10.0).round() / 10.0).collect();
-    Some((marks, y))
-}
-
-fn heat_matrix(group: &GyroGroup) -> Option<(Vec<f64>, Vec<f64>, Vec<Vec<f64>>)> {
+fn heat_matrix(group: &GyroGroup) -> Option<(Vec<f64>, Vec<f64>, Vec<Vec<f64>>, f64)> {
     if group.frames.is_empty() {
         return None;
     }
@@ -1107,7 +1149,7 @@ fn heat_matrix(group: &GyroGroup) -> Option<(Vec<f64>, Vec<f64>, Vec<Vec<f64>>)>
         if frame.amp.len() != cells {
             continue;
         }
-        loud = loud.max(frame.amp.iter().copied().fold(0.0, f64::max));
+        loud = loud.max(frame.amp.iter().zip(&y).filter(|(_, hz)| **hz >= 20.0).map(|(amp, _)| *amp).fold(0.0, f64::max));
         x.push((frame.time_us.saturating_sub(t0) as f64 / 1e6 * 100.0).round() / 100.0);
         columns.push(&frame.amp);
     }
@@ -1115,9 +1157,10 @@ fn heat_matrix(group: &GyroGroup) -> Option<(Vec<f64>, Vec<f64>, Vec<Vec<f64>>)>
         return None;
     }
     let z = (0..cells).map(|bin| {
-        columns.iter().map(|column| (db_rel(column[bin], loud) * 10.0).round() / 10.0).collect()
+        columns.iter().map(|column| (db_abs(column[bin]) * 10.0).round() / 10.0).collect()
     }).collect();
-    Some((x, y, z))
+    let top = (db_abs(loud) / 5.0).ceil() * 5.0;
+    Some((x, y, z, top))
 }
 
 fn notch_line(group: &GyroGroup, notch: &[(u64, f64)]) -> Option<(Vec<f64>, Vec<f64>)> {
@@ -1139,12 +1182,12 @@ fn notch_line(group: &GyroGroup, notch: &[(u64, f64)]) -> Option<(Vec<f64>, Vec<
     (x.len() >= 2).then_some((x, y))
 }
 
-fn heat_amps(mags: &[Vec<f64>; 3], rate: f64, fft_n: usize) -> Vec<f64> {
+fn heat_amps(mags: &[Vec<f64>; 3]) -> Vec<f64> {
     let n = mags[0].len();
     if n < 2 {
         return Vec::new();
     }
-    let (min_bin, max_bin) = band_bins(rate, fft_n, n);
+    let (min_bin, max_bin) = display_bins(n);
     let span = (max_bin - min_bin).max(1);
     let cells = span.min(HEAT_BINS);
     let mut out = vec![0.0; cells];
@@ -1166,7 +1209,7 @@ fn heat_amps(mags: &[Vec<f64>; 3], rate: f64, fft_n: usize) -> Vec<f64> {
 }
 
 fn heat_hz(rate: f64, fft_n: usize, cells: usize) -> Vec<f64> {
-    let (min_bin, max_bin) = band_bins(rate, fft_n, fft_n / 2);
+    let (min_bin, max_bin) = display_bins(fft_n / 2);
     let span = (max_bin - min_bin).max(1);
     (0..cells).map(|cell| {
         let from = min_bin + span * cell / cells;
@@ -1176,10 +1219,11 @@ fn heat_hz(rate: f64, fft_n: usize, cells: usize) -> Vec<f64> {
     }).collect()
 }
 
-fn band_bins(rate: f64, fft_n: usize, bin_count: usize) -> (usize, usize) {
+/// The bins a chart draws: from the first above DC, as WebTools does. Below 20 Hz is the aircraft's
+/// own motion; it is drawn but does not set the spectrogram's colour range.
+fn display_bins(bin_count: usize) -> (usize, usize) {
     let last = bin_count.saturating_sub(1);
-    let min_bin = ((20.0 * fft_n as f64 / rate.max(1.0)).ceil() as usize).clamp(1, last.max(1));
-    (min_bin, last.max(min_bin))
+    (1.min(last), last.max(1))
 }
 
 fn take_indexes(count: usize, cap: usize) -> Vec<usize> {

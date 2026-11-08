@@ -848,6 +848,21 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         reply(&mut socket, 200, "application/json", &json)?;
         return Ok(());
     }
+    if method == "GET" && path == "/boards" {
+        let linked = latest.lock().map(|g| if g.ok { g.boot_uid.clone() } else { String::new() }).unwrap_or_default();
+        let body = crate::db::boards(&linked).unwrap_or_else(|error| serde_json::json!({ "boards": [], "error": error }));
+        return reply(&mut socket, 200, "application/json", &serde_json::to_vec(&body)?);
+    }
+    if method == "GET" && path == "/boards/chats" {
+        let key = query.get("key").cloned().unwrap_or_default();
+        let body = crate::db::board_chats(&key).unwrap_or_else(|error| serde_json::json!({ "error": error }));
+        return reply(&mut socket, 200, "application/json", &serde_json::to_vec(&body)?);
+    }
+    if method == "GET" && path == "/boards/params" {
+        let key = query.get("key").cloned().unwrap_or_default();
+        let body = crate::db::board_params(&key).unwrap_or_else(|error| serde_json::json!({ "error": error }));
+        return reply(&mut socket, 200, "application/json", &serde_json::to_vec(&body)?);
+    }
     if method == "GET" && path == "/logs" {
         let refresh = query
             .get("refresh")
@@ -1733,6 +1748,8 @@ fn state_view(s: &Sample) -> serde_json::Value {
     serde_json::json!({
         "ok": s.ok,
         "heartbeat_at": s.heartbeat_at,
+        "rebooting": s.rebooting,
+        "reboot_back_at": crate::link::reboot_back_at(),
         "telemetry": s.telemetry,
         "detail": s.detail,
         "mode": s.mode,

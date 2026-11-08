@@ -62,6 +62,8 @@ export type Sample = {
   home_lon?: number | null;
   /** MISSION_CURRENT sequence. Item 0 is home. */
   wp_seq?: number | null;
+  /** NAV_CONTROLLER_OUTPUT distance to the active waypoint, metres. */
+  wp_dist?: number | null;
   /** VFR_HUD throttle 0…100. */
   thr_out: number | null;
   /** Rangefinder distance, metres. */

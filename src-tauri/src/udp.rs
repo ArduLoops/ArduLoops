@@ -10,9 +10,9 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs, UdpSoc
 use std::sync::Mutex;
 use std::time::Duration;
 
-use mavlink::ardupilotmega::{MavMessage, MavType};
-use mavlink::peek_reader::PeekReader;
-use mavlink::{read_versioned_msg, write_versioned_msg, MavConnection, MavHeader, MavlinkVersion};
+use mavlink::dialects::ardupilotmega::{MavMessage, MavType};
+use mavlink::error::{MessageReadError, MessageWriteError};
+use mavlink::{write_versioned_msg, MavConnection, MavHeader, MavlinkReader, MavlinkVersion};
 
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
 const MTU: usize = 1500;
@@ -96,10 +96,10 @@ fn prep(socket: UdpSocket) -> io::Result<UdpSocket> {
 }
 
 fn decode_ver(buf: &[u8], ver: MavlinkVersion) -> Vec<(MavHeader, MavMessage)> {
-    let mut reader = PeekReader::new(Cursor::new(buf.to_vec()));
+    let mut reader = MavlinkReader::new(Cursor::new(buf.to_vec()));
     let mut out = Vec::new();
     loop {
-        match read_versioned_msg(&mut reader, ver) {
+        match reader.read_message::<MavMessage>(ver) {
             Ok(msg) => out.push(msg),
             Err(_) => break,
         }
@@ -350,15 +350,29 @@ impl MavConnection<MavMessage> for UdpMav {
         *self.protocol_version.lock().unwrap() = version;
     }
 
-    fn get_protocol_version(&self) -> MavlinkVersion {
+    fn protocol_version(&self) -> MavlinkVersion {
         *self.protocol_version.lock().unwrap()
+    }
+    fn recv_raw(&self) -> Result<mavlink::MAVLinkMessageRaw, MessageReadError> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "raw frames are not kept").into())
+    }
+    fn try_recv(&self) -> Result<(MavHeader, MavMessage), MessageReadError> {
+        self.recv()
+    }
+    fn send_raw(&self, _: &mavlink::MAVLinkMessageRaw) -> Result<usize, MessageWriteError> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "raw frames are not sent").into())
+    }
+    /// Both versions are always decoded (MAVLink 2 first, then 1).
+    fn set_allow_recv_any_version(&mut self, _: bool) {}
+    fn allow_recv_any_version(&self) -> bool {
+        true
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mavlink::ardupilotmega::{
+    use mavlink::dialects::ardupilotmega::{
         MavAutopilot, MavModeFlag, MavState, MavType, HEARTBEAT_DATA, REQUEST_DATA_STREAM_DATA,
     };
 
@@ -456,7 +470,7 @@ mod tests {
             MavMessage::REQUEST_DATA_STREAM(REQUEST_DATA_STREAM_DATA {
                 target_system: 1,
                 target_component: 1,
-                req_stream_id: 0,
+                req_stream_id: mavlink::dialects::ardupilotmega::MavDataStream::MAV_DATA_STREAM_ALL,
                 req_message_rate: 25,
                 start_stop: 1,
             }),
@@ -490,7 +504,7 @@ mod tests {
             &MavMessage::REQUEST_DATA_STREAM(REQUEST_DATA_STREAM_DATA {
                 target_system: 1,
                 target_component: 1,
-                req_stream_id: 0,
+                req_stream_id: mavlink::dialects::ardupilotmega::MavDataStream::MAV_DATA_STREAM_ALL,
                 req_message_rate: 25,
                 start_stop: 1,
             }),

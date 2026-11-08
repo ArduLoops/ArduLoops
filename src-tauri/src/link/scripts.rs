@@ -128,7 +128,7 @@ impl<'a> Ftp<'a> {
         payload[12..12 + n].copy_from_slice(&data[..n]);
         send_msg(
             self.conn,
-            &MavMessage::FILE_TRANSFER_PROTOCOL(mavlink::ardupilotmega::FILE_TRANSFER_PROTOCOL_DATA {
+            &MavMessage::FILE_TRANSFER_PROTOCOL(mavlink::dialects::ardupilotmega::FILE_TRANSFER_PROTOCOL_DATA {
                 target_network: 0,
                 target_system: self.st.target_system,
                 target_component: self.st.target_component,
@@ -464,7 +464,7 @@ fn reload_scripts(
         conn,
         st.target_system,
         st.target_component,
-        mavlink::ardupilotmega::MavCmd::MAV_CMD_SCRIPTING,
+        mavlink::dialects::ardupilotmega::MavCmd::MAV_CMD_SCRIPTING,
         3.0,
         0.0,
     );
@@ -472,9 +472,9 @@ fn reload_scripts(
     while Instant::now() < deadline {
         match conn.recv() {
             Ok((hdr, msg)) => {
-                let ack = if hdr.system_id == st.target_system && hdr.component_id == st.target_component {
+                let ack = if hdr.system_id == u32::from(st.target_system) && hdr.component_id == st.target_component {
                     if let MavMessage::COMMAND_ACK(v) = &msg {
-                        (v.command == mavlink::ardupilotmega::MavCmd::MAV_CMD_SCRIPTING).then_some(v.result as u8)
+                        (v.command == mavlink::dialects::ardupilotmega::MavCmd::MAV_CMD_SCRIPTING).then_some(v.result as u8)
                     } else {
                         None
                     }

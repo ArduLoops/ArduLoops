@@ -88,6 +88,7 @@ fn await_link(c: &Connection, id: &str, kind: &str, payload: &str) -> Value {
     if kind == "connect" && connect_already_up(&before, payload, now_f64()) {
         return finish_connect(c, id, true);
     }
+    let sent_at = now_f64();
     let sent = send_link(kind, payload);
     if action_failed(&sent) {
         let error = sent.get("error").and_then(|v| v.as_str()).unwrap_or("The link command was not accepted");
@@ -119,7 +120,10 @@ fn await_link(c: &Connection, id: &str, kind: &str, payload: &str) -> Value {
         let fresh = link_fresh(&state, now_f64());
         let linked = state["ok"].as_bool() == Some(true);
         let detail = state["detail"].as_str().unwrap_or("");
-        if !fresh || !linked {
+        // The bridge marks the board back after a heartbeat gap of 1.5 s; a fast board's gap
+        // can be shorter than the 3 s that makes `fresh` false.
+        let back = state["reboot_back_at"].as_f64().unwrap_or(0.0) > sent_at;
+        if !fresh || !linked || (kind == "reboot" && back) {
             saw_drop = true;
         }
         let phase = if kind == "reboot" && saw_drop { "waiting for the link" } else if kind == "reboot" { "waiting for the link to drop" } else { "waiting" };

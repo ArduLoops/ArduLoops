@@ -116,6 +116,8 @@ export function Craft({
   imu,
   vehicle = "copter",
   alive = true,
+  mode,
+  armed = false,
   onCam,
 }: {
   roll: number;
@@ -133,6 +135,9 @@ export function Craft({
   battery?: { volts: number | null; pct: number | null };
   imu?: CraftImu;
   vehicle?: "copter" | "plane";
+  /** The flight mode, shown in the corner in place of the ground state. */
+  mode?: string;
+  armed?: boolean;
   alive?: boolean;
   onCam?: (cam: PlaneCam) => void;
 }) {
@@ -253,7 +258,16 @@ export function Craft({
           ))}
         </div>
       ) : (
-        <span className="cap">{cap}</span>
+        <span className="cap">
+          {alive && mode ? (
+            <>
+              <span className="cap-mode">{mode}</span>
+              {armed ? <span className="cap-armed">{t("Armed")}</span> : null}
+            </>
+          ) : (
+            cap
+          )}
+        </span>
       )}
       <div className="alt-read">
         <b>

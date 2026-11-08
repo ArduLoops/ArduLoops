@@ -285,7 +285,8 @@ export function stepGlance(
   if (kind === "airspeed") {
     const type = whole(param(params, "ARSPD_TYPE"));
     if (type == null) return { text: "", live: false };
-    return { text: type === 0 ? "No airspeed sensor" : "Leave the sensor", live: true };
+    if (type === 0) return { text: "No airspeed sensor", live: false, off: true };
+    return { text: "Leave the sensor", live: true };
   }
   if (kind === "level") {
     // ArduPilot's defaults are offset 0 and scale 1; anything else was written by a calibration.

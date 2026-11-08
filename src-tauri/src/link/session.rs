@@ -46,7 +46,7 @@ fn open_conn(url: &str) -> Result<Box<dyn MavConnection<MavMessage> + Send + Syn
     let conn = if udp {
         crate::udp::connect(url).map_err(io_err)?
     } else {
-        mavlink::connect::<MavMessage>(url).map_err(io_err)?
+        Box::new(mavlink::connect::<MavMessage>(url).map_err(io_err)?)
     };
     Ok(Box::new(crate::tlog::LoggedConn::new(conn)))
 }
@@ -532,6 +532,14 @@ pub fn run_loop(
         // The one AUTOPILOT_VERSION request with the stream set-up can be lost (a busy serial link at connect).
         let mut version_asked = Instant::now();
         let mut version_asks = 0u32;
+        // The boot banner names the board (AUTOPILOT_VERSION.uid2 has its UID, not its name).
+        // ArduPilot sends it at boot; a link made later asks for it.
+        let mut banner_asked = Instant::now();
+        let mut banner_asks = 0u32;
+        let mut log_quiet = false;
+        let mut intervals = IntervalQueue::default();
+        let mut restore_again = false;
+        let mut log_rates_at = Instant::now();
 
         loop {
             match drain_cmds(
@@ -569,7 +577,10 @@ pub fn run_loop(
                 att_n = 0;
                 att_t0 = now;
             }
+            // While a log downloads ATTITUDE is held at 1 Hz on purpose, so a 0 Hz second is not
+            // a lost stream; asking for 50 Hz here would undo the quiet rates and crowd the log out.
             if st.sample.heartbeat_at > 0.0
+                && !log_quiet
                 && now.duration_since(last_stream) > Duration::from_secs(3)
                 && st.sample.att_hz == 0
             {
@@ -613,6 +624,27 @@ pub fn run_loop(
                 last_hb = now;
             }
             drive_log_download(&*conn, &mut st);
+            // A full log gets the link to itself; a header peek is too short to bother.
+            let log_wants_quiet = st.active_log_download.as_ref().is_some_and(|a| a.peek_head == 0);
+            // Commands can be lost on a radio: the quiet rates go again every 5 s, the live
+            // rates once more 3 s after the log.
+            if log_wants_quiet != log_quiet {
+                log_quiet = log_wants_quiet;
+                log_rates_at = now;
+                if log_quiet {
+                    intervals.replace(quiet_interval_cmds());
+                } else {
+                    intervals.replace(restore_interval_cmds());
+                    restore_again = true;
+                }
+            } else if log_quiet && now.duration_since(log_rates_at) > Duration::from_secs(5) {
+                log_rates_at = now;
+                intervals.replace(quiet_interval_cmds());
+            } else if restore_again && now.duration_since(log_rates_at) > Duration::from_secs(3) {
+                restore_again = false;
+                intervals.replace(restore_interval_cmds());
+            }
+            intervals.drive(&*conn, &st, now);
             // Without it the board has no id, so the header shows no name or note. Ask again every 3 s, up to 10 times.
             if stream_followup
                 && version_asks < 10
@@ -622,6 +654,16 @@ pub fn run_loop(
                 request_autopilot_version(&*conn, &st);
                 version_asked = now;
                 version_asks += 1;
+            }
+            if stream_followup
+                && banner_asks < 10
+                && (st.sample.boot_uid.is_empty() || st.sample.board_name.is_empty())
+                && !sitl_link(&st)
+                && now.duration_since(banner_asked) > Duration::from_secs(if banner_asks == 0 { 0 } else { 3 })
+            {
+                request_banner(&*conn, &st);
+                banner_asked = now;
+                banner_asks += 1;
             }
             if requested_initial {
                 note_param_identity(&mut st);

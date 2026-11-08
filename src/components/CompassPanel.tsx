@@ -73,12 +73,12 @@ export function compassGlance(params: Record<string, number>): Glance {
   if (num(params, "COMPASS_DEV_ID") == null && num(params, "COMPASS_USE") == null) {
     return { text: "", live: false };
   }
-  // Turned off on purpose. Settled only when the EKF takes its yaw from elsewhere: not the compass (1, 3) and not
-  // None (0), where the heading has no source and drifts.
+  // Turned off on purpose: settled, shown grey. Only an EKF that still takes its yaw from the compass (1, 3)
+  // contradicts that and needs attention.
   if (num(params, "COMPASS_ENABLE") === 0) {
     const yaw = num(params, "EK3_SRC1_YAW");
     if (yaw === 1 || yaw === 3) return { text: "Off · the EKF still expects a compass", live: false };
-    if (yaw === 0) return { text: "Off · no heading source", live: false };
+    if (yaw === 0) return { text: "Off · no heading source", live: false, off: true };
     return { text: "Off", live: false, off: true };
   }
   let any = false;

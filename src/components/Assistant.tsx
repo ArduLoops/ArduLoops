@@ -599,6 +599,12 @@ export function Assistant({
         return;
       }
       if (detail.keep) return;
+      if (detail.chat) {
+        setViewOff(false);
+        setAskStarters([]);
+        setChatId(detail.chat);
+        return;
+      }
       // Ask: a new chat with the view chip on and nothing sent. A running turn is not cut.
       if (!busyRef.current) newThreadRef.current?.();
       setAskStarters(detail.starters ?? []);
@@ -1321,6 +1327,7 @@ function logTitle(item: LocalLog, t: (k: string, vars?: Record<string, string | 
   if (item.original_name) return item.original_name;
   if (item.board) return item.board;
   if (item.vehicle === "imported") return t("Loaded log");
+  if (item.vehicle === "sitl" || item.vehicle?.startsWith("sitl-")) return item.vehicle === "sitl" ? "SITL" : `SITL ${item.vehicle.slice(5)}`;
   if (item.vehicle) return t("Board {id}", { id: item.vehicle.slice(0, 8) });
   return logName(item.id);
 }
@@ -1730,8 +1737,8 @@ function ChatPane({
                   </p>
                 ) : null}
                 <div className="ai-prompts">
-                  {(viewOn && askStarters.length ? askStarters : starterPrompts(drone.frame)).map((text) => (
-                    <button type="button" key={text} onClick={() => onSend(t(text))}>{t(text)}</button>
+                  {(viewOn && askStarters.length ? askStarters.map((text) => ({ label: text, text })) : starterPrompts(drone.frame)).map((s) => (
+                    <button type="button" key={s.text} title={s.label === s.text ? undefined : t(s.text)} onClick={() => { onDraft(t(s.text)); box.current?.focus(); }}>{t(s.label)}</button>
                   ))}
                 </div>
               </div>
@@ -2047,7 +2054,6 @@ function ChatPane({
                   >
                     <span className="ai-model-name">{cloud ? t("ArduLoops Cloud") : shownModel}</span>
                     {!cloud && reasoning && provider === "gemini" ? <span className="ai-model-level">· {reasoning}</span> : null}
-                    <span className="ai-model-cost">{`· ${formatUsd(chatCost) || "$0.00"}`}</span>
                     <span className="ai-model-caret" aria-hidden>▾</span>
                   </button>
                   {modelOpen ? (
@@ -3315,28 +3321,43 @@ function changeBit(value: unknown): string {
   }).filter(Boolean).slice(0, 6).join(", ");
 }
 
-function starterPrompts(frame: string | undefined): string[] {
+/** Four starts: before the first flight, tuning after it, the WebTools check, and a review of the last flight. */
+const STARTER_LABELS = [
+  "Prepare for the first flight",
+  "Tune from the newest log",
+  "WebTools check",
+  "Review the last flight",
+];
+
+type Starter = { label: string; text: string };
+
+/** The four starts as a short label and the full message the click sends. */
+function starterPrompts(frame: string | undefined): Starter[] {
+  return starterTexts(frame).map((text, i) => ({ label: STARTER_LABELS[i] ?? text, text }));
+}
+
+function starterTexts(frame: string | undefined): string[] {
   if (frame === "plane") {
     return [
-      "Download the newest log and judge how well every loop is tuned: roll and pitch rate, roll and pitch angle, the yaw damper, ground steering, L1, and TECS. Use the log and the parameters already set. Do not write anything.",
-      "Prepare the tuning steps for this plane from the parameters already on it and the current plane tuning guide. Say which step this plane is on, what to fly next, and the single next change. Do not write it.",
-      "Calculate the notch and low-pass filters for this plane from the newest downloaded log and the filter parameters already set. Use only a frequency the tools return. Do not invent one, and do not write the parameters.",
-      "Tune the roll and pitch PIDs on this plane from the parameters already on the vehicle and the current roll and pitch guide. Name the term to move and the size of the step. Do not write it.",
+      "Get this plane ready for its first flight. Read the Setup status first and skip what is already done; name only what is still missing or wrong, and help me finish it. Check and set up logging so the next log can be read by the WebTools reviews.",
+      "Download the newest log from the board, review the control loops and filters of this plane, and make the changes that give the best result. Then get the plane and me ready for the next test flight: what to fly and what to watch. When the tune is done, say so and suggest ending the tuning phase.",
+      "Download the newest log from the board and check this plane with the WebTools reviews that apply to it: HardwareReport, FilterReview, PIDReview, and MAGFit when a compass is fitted. Skip a review this plane or the log cannot support and say why. Give each finding with its number and the parameter it points to, and fix what needs fixing.",
+      "Download the newest log from the board and review that flight of this plane: what it did, every warning, failsafe, and error, vibration and power, and what changed since the previous log. Fix what needs fixing.",
     ];
   }
   if (frame === "copter") {
     return [
-      "Download the newest log and judge how well every loop is tuned: rate and angle on roll, pitch, and yaw; height position, velocity, and acceleration; and horizontal NE position, NE velocity, and lean. Use the log and the parameters already set. Do not write anything.",
-      "Prepare the first-flight tuning steps for this copter from the parameters already on it and the current copter tuning process. Say which step this copter is on, what to fly, and the single next change. Do not write it.",
-      "Calculate the harmonic-notch and low-pass filters for this copter from the newest downloaded log and the filter parameters already set. Use only a frequency the tools return. Do not invent one, and do not write the parameters.",
-      "Tune the roll and pitch PIDs on this copter from the rate and angle parameters already on the vehicle and the current roll and pitch guide. Name the term to move and the size of the step. Do not write it.",
+      "Get this copter ready for its first flight. Read the Setup status first and skip what is already done; name only what is still missing or wrong, and help me finish it. Check and set up logging so the next log can be read by the WebTools reviews.",
+      "Download the newest log from the board, review the PID loops and filters of this copter, and make the changes that give the best result. Then get the copter and me ready for the next test flight: what to fly and what to watch. When the tune is done, say so and suggest ending the tuning phase.",
+      "Download the newest log from the board and check this copter with the WebTools reviews that apply to it: HardwareReport, FilterReview, PIDReview, motor balance, and MAGFit when a compass is fitted. Skip a review this copter or the log cannot support and say why. Give each finding with its number and the parameter it points to, and fix what needs fixing.",
+      "Download the newest log from the board and review that flight of this copter: what it did, every warning, failsafe, and error, vibration and power, and what changed since the previous log. Fix what needs fixing.",
     ];
   }
   return [
-    "Download the newest log and judge how well every loop on this airframe is tuned. Name each loop the log and the parameters show. Do not write anything.",
-    "Prepare the first tuning steps from the saved parameters. Identify the airframe, open its current tuning process, and say the single next change. Do not write it.",
-    "Calculate filter settings from the newest downloaded log. Use only a frequency the tools return. Do not invent one, and do not write the parameters.",
-    "Tune the PIDs from the saved parameters and the current guide for that airframe. Name the term to move and the size of the step. Do not write it.",
+    "Get this vehicle ready for its first flight. Read the Setup status first and skip what is already done; name only what is still missing or wrong, and help me finish it. Check and set up logging so the next log can be read by the WebTools reviews.",
+    "Download the newest log from the board, review the control loops and filters, and make the changes that give the best result. Then get the vehicle and me ready for the next test flight: what to fly and what to watch. When the tune is done, say so and suggest ending the tuning phase.",
+    "Download the newest log from the board and check this vehicle with the WebTools reviews that apply to it. Skip a review this vehicle or the log cannot support and say why. Give each finding with its number and the parameter it points to, and fix what needs fixing.",
+    "Download the newest log from the board and review that flight: what it did, every warning, failsafe, and error, vibration and power, and what changed since the previous log. Fix what needs fixing.",
   ];
 }
 

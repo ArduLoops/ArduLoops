@@ -1,11 +1,14 @@
 //! MAVLink bridge for ArduLoops.
+// ArduPilot still speaks REQUEST_DATA_STREAM, MISSION_REQUEST and the *_INT frames that newer
+// MAVLink definitions mark deprecated; this link keeps using them on purpose.
+#![allow(deprecated)]
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use mavlink::ardupilotmega::{
+use mavlink::dialects::ardupilotmega::{
     MavAutopilot, MavCmd, MavFrame, MavMessage, MavMissionResult, MavModeFlag, MavParamType, MavProtocolCapability,
     MavResult, MavType, PidTuningAxis, ATTITUDE_DATA, ATTITUDE_TARGET_DATA, COMMAND_ACK_DATA, COMMAND_LONG_DATA,
     GLOBAL_POSITION_INT_DATA, GPS_RAW_INT_DATA, HEARTBEAT_DATA, HOME_POSITION_DATA, LOG_DATA_DATA,

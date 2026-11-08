@@ -1,12 +1,12 @@
 // Parameter reads, writes, and stream requests.
 
 
-fn param_id(name: &str) -> [u8; 16] {
+fn param_id(name: &str) -> mavlink::types::CharArray<16> {
     let mut id = [0u8; 16];
     let bytes = name.as_bytes();
     let n = bytes.len().min(16);
     id[..n].copy_from_slice(&bytes[..n]);
-    id
+    id.into()
 }
 
 fn param_name(id: &[u8]) -> String {
@@ -222,7 +222,7 @@ fn request_param_index(conn: &dyn MavConnection<MavMessage>, st: &LinkState, ind
             param_index: index as i16,
             target_system: st.target_system,
             target_component: st.target_component,
-            param_id: [0; 16],
+            param_id: [0u8; 16].into(),
         }),
     );
 }
@@ -543,6 +543,76 @@ const STREAM_INTERVALS: &[(f32, f32)] = &[
     (MSG_BATTERY_STATUS, 1_000_000.0),
 ];
 
+/// While a log downloads. ArduPilot sends LOG_DATA only into the room telemetry leaves; on a
+/// 115200 radio the live streams take all of it and the log came at ~1.7 KB/s. -1 stops a
+/// message; the rest keep the header and the battery alive (the ATTITUDE watchdog is off
+/// during a download).
+const LOG_QUIET_INTERVALS: &[(f32, f32)] = &[
+    (MSG_ATTITUDE, 1_000_000.0),
+    (MSG_PID_TUNING, -1.0),
+    (MSG_ATTITUDE_TARGET, -1.0),
+    (MSG_NAV_CONTROLLER_OUTPUT, -1.0),
+    (MSG_RC_CHANNELS, 1_000_000.0),
+    (MSG_SERVO_OUTPUT_RAW, -1.0),
+    (MSG_GPS_RAW_INT, 1_000_000.0),
+    (MSG_GLOBAL_POSITION_INT, 1_000_000.0),
+    (MSG_VFR_HUD, 1_000_000.0),
+    (MSG_MISSION_CURRENT, -1.0),
+    (MSG_EKF_STATUS_REPORT, 1_000_000.0),
+    (MSG_SYS_STATUS, 1_000_000.0),
+    (MSG_BATTERY_STATUS, 1_000_000.0),
+    (MSG_SIM_STATE, -1.0),
+    (MSG_SIMSTATE, -1.0),
+    (MSG_SCALED_IMU, -1.0),
+    (MSG_SCALED_IMU2, -1.0),
+    (MSG_SCALED_IMU3, -1.0),
+    (MSG_AHRS2, -1.0),
+];
+
+/// The quiet rates as (message, interval) commands. Only intervals the live set also uses
+/// (1 s) or "off": ArduPilot has 10 interval buckets per link, and a new interval would take
+/// one that the live rates need back.
+fn quiet_interval_cmds() -> Vec<(f32, f32)> {
+    LOG_QUIET_INTERVALS.to_vec()
+}
+
+/// The live rates again, ATTITUDE first; 0 gives AHRS2 back to its SR group rate.
+fn restore_interval_cmds() -> Vec<(f32, f32)> {
+    let mut cmds = vec![(MSG_ATTITUDE, 20_000.0)];
+    cmds.extend_from_slice(STREAM_INTERVALS);
+    cmds.push((MSG_AHRS2, 0.0));
+    cmds
+}
+
+/// Interval commands one at a time. Two full sets back to back (a log that fails at once)
+/// were ~1.8 KB in a few ms; the board's serial receive buffer dropped part of them and the
+/// rates stayed wherever the lost commands left them.
+#[derive(Default)]
+struct IntervalQueue {
+    cmds: std::collections::VecDeque<(f32, f32)>,
+    sent_at: Option<Instant>,
+}
+
+const INTERVAL_GAP: Duration = Duration::from_millis(20);
+
+impl IntervalQueue {
+    /// A new set replaces what is still waiting: only the latest rates count.
+    fn replace(&mut self, cmds: Vec<(f32, f32)>) {
+        self.cmds = cmds.into();
+    }
+
+    fn drive(&mut self, conn: &dyn MavConnection<MavMessage>, st: &LinkState, now: Instant) {
+        if self.sent_at.is_some_and(|at| now.duration_since(at) < INTERVAL_GAP) {
+            return;
+        }
+        let Some((mid, us)) = self.cmds.pop_front() else {
+            return;
+        };
+        command_long(conn, st.target_system, st.target_component, MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL, mid, us);
+        self.sent_at = Some(now);
+    }
+}
+
 /// ATTITUDE only. A full stream/param dump on first HEARTBEAT starves the TCP
 /// session; Cygwin SITL then exits when this client reconnects.
 fn request_attitude_stream(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
@@ -553,7 +623,7 @@ fn request_attitude_stream(conn: &dyn MavConnection<MavMessage>, st: &LinkState)
         &MavMessage::REQUEST_DATA_STREAM(REQUEST_DATA_STREAM_DATA {
             target_system: sys,
             target_component: comp,
-            req_stream_id: 10,
+            req_stream_id: mavlink::dialects::ardupilotmega::MavDataStream::MAV_DATA_STREAM_EXTRA1,
             req_message_rate: 50,
             start_stop: 1,
         }),
@@ -664,6 +734,11 @@ fn request_autopilot_version(conn: &dyn MavConnection<MavMessage>, st: &LinkStat
         148.0,
         0.0,
     );
+}
+
+/// MAV_CMD_DO_SEND_BANNER: ArduPilot sends its boot lines again (firmware, board name and UID).
+fn request_banner(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {
+    command_long(conn, st.target_system, st.target_component, MavCmd::MAV_CMD_DO_SEND_BANNER, 0.0, 0.0);
 }
 
 fn request_param_list(conn: &dyn MavConnection<MavMessage>, st: &LinkState) {

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
 import { askAssistant } from "../lib/assistantAsk";
-import { guessCells } from "../lib/vehicleProfile";
+import { useLinkedController } from "../lib/linkedController";
+import { CELL_VOLTS, CHEMISTRIES, guessCells, readProfile } from "../lib/vehicleProfile";
 import { noteUi, send as sendCmd, writeParam } from "../mav/cmd";
 import { getLatest, getSetupSnapshot, subscribe } from "../mav/store";
 import { paramNum, type WizardClose } from "../wizards/close";
@@ -82,12 +83,21 @@ async function writeOne(name: string, value: number, from: number | null): Promi
 }
 
 /** The pack against its arm, low and critical marks. */
-function PackArt({ pack, cells, marks, note }: { pack: Pack; cells: number; marks: { arm: number | null; low: number | null; crit: number | null }; note: string }) {
+function PackArt({ pack, cells, marks, note, label, range }: {
+  pack: Pack;
+  cells: number;
+  marks: { arm: number | null; low: number | null; crit: number | null };
+  note: string;
+  /** The pack as the profile describes it, printed on the shell: "4S Li-ion" and the capacity. */
+  label: { top: string; sub: string } | null;
+  /** Per-cell empty and full voltage for the chemistry. */
+  range: { min: number; max: number };
+}) {
   const t = useT();
-  // 3.3 to 4.2 V a cell, stretched down to the lowest mark so a mark set too low is still drawn where it is.
+  // Empty to full a cell, stretched down to the lowest mark so a mark set too low is still drawn where it is.
   const lowest = [marks.arm, marks.low, marks.crit].filter((m): m is number => m != null && m > 0);
-  const lo = Math.min(3.3 * cells, ...lowest.map((m) => m - 0.3 * cells / 4));
-  const hi = 4.2 * cells;
+  const lo = Math.min(range.min * cells, ...lowest.map((m) => m - 0.3 * cells / 4));
+  const hi = range.max * cells;
   const y = (v: number) => 196 - Math.max(0, Math.min(1, (v - lo) / (hi - lo))) * 168;
   const v = pack.volts != null && pack.volts >= PACK_MIN_V ? pack.volts : null;
   const tone = v == null ? "mute" : marks.crit != null && v < marks.crit ? "hot" : marks.low != null && v < marks.low ? "amber" : "ok";
@@ -104,6 +114,12 @@ function PackArt({ pack, cells, marks, note }: { pack: Pack; cells: number; mark
         <rect x="40" y="14" width="28" height="12" rx="3" className="bs-cap" />
         <rect x="16" y="24" width="76" height="178" rx="10" className="bs-shell" />
         {v != null ? <rect x="22" y={y(v)} width="64" height={Math.max(0, 196 - y(v))} rx="6" className={`bs-fill ${tone}`} /> : null}
+        {label ? (
+          <g className="bs-label">
+            <text x="54" y="58">{label.top}</text>
+            {label.sub ? <text x="54" y="74" className="sub">{label.sub}</text> : null}
+          </g>
+        ) : null}
         {mark(marks.arm, "Arm", "cyan")}
         {mark(marks.low, "Low", "amber")}
         {mark(marks.crit, "Critical", "hot")}
@@ -120,6 +136,11 @@ export function BatteryStep() {
   const sample = useSyncExternalStore(subscribe, getSetupSnapshot, getSetupSnapshot);
   const live = useSyncExternalStore(subscribe, getLatest, getLatest);
   const params = sample.params || {};
+  // The pack the user described in the vehicle profile: its chemistry sets how low a cell may go.
+  const profile = readProfile(useLinkedController<{ profile?: unknown }>()?.profile);
+  const chemistry = profile?.chemistry ?? null;
+  const chemLabel = chemistry ? CHEMISTRIES.find(([c]) => c === chemistry)?.[1] ?? "LiPo" : "LiPo";
+  const cellEmpty = profile?.cell_v_min ?? (chemistry ? CELL_VOLTS[chemistry].min : CELL_VOLTS.lipo.min);
   const [open, setOpen] = useState<null | "sensor" | "voltage" | "current">(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -180,7 +201,15 @@ export function BatteryStep() {
       {!sample.ok ? <div className="frs-note info">{t("Connect a vehicle to read its battery.")}</div> : null}
       {sample.ok && !hasPack && monitor !== 0 ? <div className="frs-note warn">{t("No pack: the board reads about 0 V, as it does on USB power. ArduPilot reports a critical-voltage failsafe until a pack is plugged in; calibration waits for one.")}</div> : null}
       <div className="ms-top">
-        <PackArt pack={pack} cells={pack.cells.length || cells} marks={marks} note={monitor === 0 ? t("No battery monitor") : t("No pack: the board is on USB")} />
+        <PackArt
+          pack={pack}
+          cells={pack.cells.length || cells}
+          marks={marks}
+          range={{ min: cellEmpty, max: profile?.cell_v_max ?? (chemistry ? CELL_VOLTS[chemistry].max : CELL_VOLTS.lipo.max) }}
+          label={chemistry || profile?.cells ? {
+            top: [profile?.cells ? `${profile.cells}S` : "", chemistry ? chemLabel : ""].filter(Boolean).join(" "),
+            sub: profile?.capacity_mah ? `${profile.capacity_mah} mAh` : "",
+          } : null} note={monitor === 0 ? t("No battery monitor") : t("No pack: the board is on USB")} />
         <div className="ms-cards">
           <div className="ms-card">
             <div className="ms-card-head">
@@ -217,8 +246,10 @@ export function BatteryStep() {
             {threshold("Low", `${volt(marks.low)}${lowAct != null ? ` → ${t(battActionName(vehicle, Math.round(lowAct)))}` : ""}`, "BATT_LOW_VOLT · BATT_FS_LOW_ACT")}
             {threshold("Critical", `${volt(marks.crit)}${crtAct != null ? ` → ${t(battActionName(vehicle, Math.round(crtAct)))}` : ""}`, "BATT_CRT_VOLT · BATT_FS_CRT_ACT")}
             {threshold("Capacity", capacity ? `${Math.round(capacity)} mAh${lowMah ? ` · ${t("low at {n}", { n: Math.round(lowMah) })}` : ""}` : "—", "BATT_CAPACITY · BATT_LOW_MAH")}
-            {lowPerCell != null && lowPerCell < 3.3 ? (
-              <div className="mw-note warn">{Icon.warn()}<span>{t("Low is {v} V per cell on this {n}S pack: below what a LiPo usually allows. Were the thresholds set for another pack?", { v: lowPerCell.toFixed(2), n: cells })}</span></div>
+            {lowPerCell != null && lowPerCell < cellEmpty - 0.005 ? (
+              <div className="mw-note warn">{Icon.warn()}<span>{chemistry
+                ? t("Low is {v} V per cell on this {n}S {chem} pack, below its empty {e} V. Were the thresholds set for another pack?", { v: lowPerCell.toFixed(2), n: cells, chem: chemLabel, e: cellEmpty.toFixed(2) })
+                : t("Low is {v} V per cell on this {n}S pack: below what a LiPo usually allows. Li-ion goes to 3.0 V; set the chemistry in the vehicle profile.", { v: lowPerCell.toFixed(2), n: cells })}</span></div>
             ) : null}
             <span className="ms-hint">{t("Set by the assistant from the pack you name, for example “4S 1300 mAh LiPo”.")}</span>
           </div>

@@ -106,21 +106,30 @@ fn log_download_complete(active: &ActiveLogDownload) -> bool {
         || (0..chunks).all(|index| !log_chunk_wanted(active, index) || log_bit_received(&active.received, index))
 }
 
+/// Gaps closer than this (in chunks) go in one request: a few chunks sent twice cost less than
+/// one more round trip on a radio link.
+const LOG_GAP_MERGE: usize = 8;
+
 fn next_log_request(active: &ActiveLogDownload) -> Option<(usize, usize)> {
     let chunk = first_missing_log_chunk(active)?;
     let offset = chunk * LOG_BLOCK;
     let chunks = active.size.div_ceil(LOG_BLOCK);
-    let mut end = (offset + LOG_BLOCK).min(active.size);
+    let mut last_missing = chunk;
     let mut next = chunk + 1;
-    while next < chunks
-        && end - offset < LOG_BLOCK * 512
-        && log_chunk_wanted(active, next)
-        && !log_bit_received(&active.received, next)
-    {
-        end = ((next + 1) * LOG_BLOCK).min(active.size);
+    while next < chunks && next - chunk < 512 && log_chunk_wanted(active, next) && next - last_missing <= LOG_GAP_MERGE {
+        if !log_bit_received(&active.received, next) {
+            last_missing = next;
+        }
         next += 1;
     }
+    let end = ((last_missing + 1) * LOG_BLOCK).min(active.size);
     Some((offset, end - offset))
+}
+
+/// Every chunk of the last request has arrived: the board has closed that transfer.
+fn requested_range_done(active: &ActiveLogDownload) -> bool {
+    let (start, end) = active.requested;
+    end > start && (start / LOG_BLOCK..end.div_ceil(LOG_BLOCK)).all(|chunk| log_bit_received(&active.received, chunk))
 }
 
 fn write_log_bytes(active: &mut ActiveLogDownload, offset: usize, data: &[u8]) {
@@ -173,6 +182,49 @@ fn start_text(summary_utc: &str, time_utc: u32) -> String {
     crate::dflog::unix_rfc3339(time_utc as u64)
 }
 
+/// LOG_DATA with count 0 at `offset`: the log ends there, whatever its listed size said. A
+/// log that ends at 0 has no data (the board lists it but cannot read it); a shorter one is
+/// kept up to that point and completes once the bytes before it are in.
+fn log_data_ended(st: &mut LinkState, offset: usize) {
+    let Some(active) = st.active_log_download.as_mut() else {
+        return;
+    };
+    if offset >= active.size {
+        return;
+    }
+    if offset == 0 {
+        let active = st.active_log_download.take().expect("active log");
+        let (id, size) = (active.id, active.size as u32);
+        if active.peek_head > 0 {
+            fail_log_peek(st, id, size, NO_LOG_DATA);
+        } else {
+            st.sample.log_download = Some(LogDownload {
+                id,
+                size,
+                received: 0,
+                complete: true,
+                path: String::new(),
+                error: NO_LOG_DATA.into(),
+                updated_at: wall_time(),
+            });
+        }
+        return;
+    }
+    active.size = offset;
+    if active.peek_head > 0 {
+        // The tail was placed from the listed end; only the head is still right.
+        active.peek_head = active.peek_head.min(offset);
+        active.peek_tail = 0;
+        active.bytes.truncate(active.peek_head);
+    } else {
+        active.bytes.truncate(offset);
+    }
+    active.last_data = Instant::now();
+    update_log_download_report(st, String::new());
+}
+
+const NO_LOG_DATA: &str = "The board has no data in this log";
+
 fn finish_log_peek(st: &mut LinkState, active: ActiveLogDownload) {
     let head_len = active.peek_head.min(active.bytes.len());
     let summary = crate::dflog::summarize_log(&active.bytes[..head_len], &active.bytes[head_len..]);
@@ -214,9 +266,23 @@ fn fail_log_peek(st: &mut LinkState, id: u16, size: u32, error: &str) {
     );
 }
 
-/// The folder under logs/ for this board: its boot uid, or system-{id} before the boot banner is seen.
+/// The linked vehicle is ArduPilot SITL: only SITL has the SIM_* parameters.
+fn sitl_link(st: &LinkState) -> bool {
+    st.sample.params.contains_key("SIM_SPEEDUP") || st.sample.params.contains_key("SIM_WIND_SPD")
+}
+
+/// `sitl-copter`, `sitl-plane`, or `sitl` before the vehicle type is known.
+fn sitl_log_dir(frame: &str) -> String {
+    if frame.is_empty() { "sitl".into() } else { format!("sitl-{frame}") }
+}
+
+/// The folder under logs/ for this board: its boot uid, or system-{id} before the boot banner is
+/// seen. SITL has no board UID (its boot line is the machine id), so it goes by vehicle type,
+/// apart from real boards: `sitl-copter`, `sitl-plane`.
 fn log_dir_key(st: &LinkState) -> String {
-    if st.sample.boot_uid.is_empty() {
+    if sitl_link(st) {
+        sitl_log_dir(&st.sample.frame)
+    } else if st.sample.boot_uid.is_empty() {
         format!("system-{}", st.target_system)
     } else {
         st.sample.boot_uid.chars().filter(|c| c.is_ascii_alphanumeric()).collect()
@@ -224,7 +290,12 @@ fn log_dir_key(st: &LinkState) -> String {
 }
 
 fn save_completed_log(st: &mut LinkState, active: ActiveLogDownload) {
-    let key = log_dir_key(st);
+    // Before the boot line arrives a board is only system-<id>; the log itself names it.
+    let key = if !sitl_link(st) && st.sample.boot_uid.is_empty() {
+        Some(crate::dflog::vehicle_dir(&active.bytes)).filter(|dir| dir != "imported").unwrap_or_else(|| log_dir_key(st))
+    } else {
+        log_dir_key(st)
+    };
     st.sample.log_dir = key.clone();
     let root = crate::db::data_dir().join("logs").join(key);
     let time_utc = st.sample.logs.iter().find(|log| log.id == active.id).map(|log| log.time_utc).unwrap_or(0);
@@ -246,6 +317,9 @@ fn save_completed_log(st: &mut LinkState, active: ActiveLogDownload) {
 }
 
 /// A full file is paced near 6 KB/s on a slow serial link. The header peek stays short.
+/// No log data for this long: the board may still hold the last transfer open.
+const LOG_STALL: Duration = Duration::from_secs(3);
+
 fn log_download_budget(size: usize, peek: bool) -> Duration {
     if peek {
         return Duration::from_secs(40);
@@ -296,7 +370,9 @@ fn drive_log_download(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState) 
         end_log_request(conn, st);
         return;
     }
-    let gap = if active.peek_head == 0 { 900 } else { 200 };
+    // The next gap goes out at once when the last request came in whole; otherwise after a
+    // quiet spell, since the board ignores a request while its transfer is still open.
+    let gap = if requested_range_done(active) { 30 } else if active.peek_head == 0 { 900 } else { 200 };
     if now.duration_since(active.last_data) < Duration::from_millis(gap)
         || now.duration_since(active.last_request) < Duration::from_millis(gap)
     {
@@ -306,6 +382,14 @@ fn drive_log_download(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState) 
         return;
     };
     let id = active.id;
+    // ArduPilot drops a LOG_REQUEST_DATA while it holds a transfer it thinks is still open (a lost
+    // LOG_REQUEST_END or end packet). After a quiet spell, end that transfer before asking again,
+    // as Mission Planner does; otherwise every retry is ignored and the download stays put.
+    let stalled = now.duration_since(active.last_data) > LOG_STALL;
     active.last_request = now;
+    active.requested = (offset, offset + count);
+    if stalled {
+        end_log_request(conn, st);
+    }
     request_log_range(conn, st, id, offset, count);
 }

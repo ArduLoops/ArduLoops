@@ -346,6 +346,17 @@ function batteryOf(s: Sample): { volts: number | null; pct: number | null } {
   return { volts, pct };
 }
 
+/** Metres from home to the vehicle, rounded; null without both positions. */
+function homeDistance(s: { lat?: number | null; lon?: number | null; home_lat?: number | null; home_lon?: number | null }): number | null {
+  if (s.lat == null || s.lon == null || s.home_lat == null || s.home_lon == null) return null;
+  if (s.lat === 0 && s.lon === 0) return null;
+  const r = 6371000;
+  const k = Math.PI / 180;
+  const x = (s.lon - s.home_lon) * k * Math.cos(((s.lat + s.home_lat) / 2) * k);
+  const y = (s.lat - s.home_lat) * k;
+  return Math.round(Math.hypot(x, y) * r);
+}
+
 function CraftLive({
   axis,
   vehicle,
@@ -371,8 +382,18 @@ function CraftLive({
       alive: s.ok,
       battery: batteryOf(s),
       imu: imuOf(s),
+      mode: s.mode ?? "",
+      armed: !!s.armed,
+      wpSeq: s.wp_seq ?? null,
+      wpDist: s.wp_dist ?? null,
+      home: homeDistance(s),
     }),
     (a, b) =>
+      a.mode === b.mode &&
+      a.armed === b.armed &&
+      a.wpSeq === b.wpSeq &&
+      a.wpDist === b.wpDist &&
+      a.home === b.home &&
       a.roll === b.roll &&
       a.pitch === b.pitch &&
       a.yaw === b.yaw &&
@@ -402,6 +423,15 @@ function CraftLive({
       altClass = "dn";
     } else altLabel = t("Holding");
   }
+  // Steady, the line says where the vehicle is going: the mission waypoint in Auto, otherwise how far home is.
+  const steady = altClass === "" || (altClass === "gnd" && pose.climb <= 0.15);
+  if (steady && pose.mode === "AUTO" && pose.wpSeq != null && pose.wpSeq > 0) {
+    altLabel = pose.wpDist != null && pose.wpDist > 0
+      ? t("WP {n} · {d} m", { n: pose.wpSeq, d: Math.round(pose.wpDist) })
+      : t("WP {n}", { n: pose.wpSeq });
+  } else if (steady && pose.home != null) {
+    altLabel = t("home {d}", { d: pose.home < 1000 ? `${pose.home} ${t("m")}` : `${(pose.home / 1000).toFixed(1)} ${t("km")}` });
+  }
   return (
     <Craft
       roll={pose.roll}
@@ -420,6 +450,8 @@ function CraftLive({
       imu={pose.imu}
       vehicle={vehicle}
       alive={pose.alive}
+      mode={pose.mode}
+      armed={pose.armed}
       onCam={onCam}
     />
   );

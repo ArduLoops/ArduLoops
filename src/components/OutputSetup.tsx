@@ -27,6 +27,28 @@ export function useLiveOutputs(): (number | null)[] {
 }
 
 /**
+ * Each output's RPM from ESC telemetry (ESC_TELEMETRY_n_TO_m.rpmK), indexed by output; null where none arrives.
+ * ArduPilot numbers ESCs by output, and reports mechanical RPM (eRPM divided by the pole pairs).
+ */
+export function useEscRpm(): (number | null)[] {
+  return useStorePicked(
+    (s) => Array.from({ length: OUTPUTS }, (_, i) => {
+      const first = Math.floor(i / 4) * 4 + 1;
+      const v = s.live_nums?.[`ESC_TELEMETRY_${first}_TO_${first + 3}.rpm${i % 4}`];
+      return typeof v === "number" && Number.isFinite(v) ? Math.round(v) : null;
+    }),
+    (a, b) => a.every((v, i) => v === b[i]),
+  );
+}
+
+/** "0 rpm", "12 340 rpm": the ESC's reading next to the output's PWM. */
+function RpmTag({ rpm }: { rpm: number | null }) {
+  const t = useT();
+  if (rpm == null) return null;
+  return <span className={`ops-rpm${rpm > 0 ? " on" : ""}`} title={t("From ESC telemetry")}>{t("{n} rpm", { n: rpm.toLocaleString("uk-UA") })}</span>;
+}
+
+/**
  * Parameter edits held as a draft until Write. A value equal to the vehicle's is not a change,
  * so the count stays honest when an edit is put back by hand.
  */
@@ -308,6 +330,7 @@ export function OutputsTable({
   locked?: (out: number, fn: number) => { name: ReactNode; spin: ReactNode };
 }) {
   const t = useT();
+  const rpm = useEscRpm();
   const list = functionList(vehicle);
   const outs = Array.from({ length: OUTPUTS }, (_, i) => i + 1);
   const fnOf = (o: number) => {
@@ -341,7 +364,7 @@ export function OutputsTable({
               <span className="ops-out">OUT {o}</span>
               <span className="ops-locked">{cell.name}</span>
               <span className="ops-spin">{cell.spin}</span>
-              <span className="ops-live"><PwmBar min={val(`SERVO${o}_MIN`)} trim={null} max={val(`SERVO${o}_MAX`)} live={pwm} small />{pwm ?? "—"}</span>
+              <span className="ops-live"><PwmBar min={val(`SERVO${o}_MIN`)} trim={null} max={val(`SERVO${o}_MAX`)} live={pwm} small />{pwm ?? "—"}<RpmTag rpm={rpm[o - 1]} /></span>
               <span />
             </div>
           );
@@ -373,7 +396,7 @@ export function OutputsTable({
                 );
               })}
             </span>
-            <span className="ops-live"><PwmBar min={val(`SERVO${o}_MIN`)} trim={val(`SERVO${o}_TRIM`)} max={val(`SERVO${o}_MAX`)} live={pwm} small />{pwm ?? "—"}</span>
+            <span className="ops-live"><PwmBar min={val(`SERVO${o}_MIN`)} trim={val(`SERVO${o}_TRIM`)} max={val(`SERVO${o}_MAX`)} live={pwm} small />{pwm ?? "—"}<RpmTag rpm={rpm[o - 1]} /></span>
             <span>{rev != null ? <Switch on={rev === 1} label={t("Reverse OUT {n}", { n: o })} onChange={(on) => draft.set(`SERVO${o}_REVERSED`, on ? 1 : 0)} /> : null}</span>
           </div>
         );

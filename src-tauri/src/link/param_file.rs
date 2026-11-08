@@ -193,7 +193,7 @@ impl<'a> Ftp<'a> {
         payload[8..12].copy_from_slice(&file.first_gap().to_le_bytes());
         send_msg(
             self.conn,
-            &MavMessage::FILE_TRANSFER_PROTOCOL(mavlink::ardupilotmega::FILE_TRANSFER_PROTOCOL_DATA {
+            &MavMessage::FILE_TRANSFER_PROTOCOL(mavlink::dialects::ardupilotmega::FILE_TRANSFER_PROTOCOL_DATA {
                 target_network: 0,
                 target_system: self.st.target_system,
                 target_component: self.st.target_component,

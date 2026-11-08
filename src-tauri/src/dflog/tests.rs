@@ -230,21 +230,29 @@ mod tests {
         assert_eq!(spectrum["chart"]["x_label"], json!("Hz"));
         assert_eq!(spectrum["chart"]["axes"][0]["lines"][0]["name"], json!("X"));
         let lines = spectrum["chart"]["axes"][0]["lines"].as_array().unwrap();
-        assert_eq!(lines.len(), 4, "{spectrum}");
+        assert_eq!(lines.len(), 3, "{spectrum}");
         assert_eq!(lines[1]["name"], json!("Y"));
         assert_eq!(lines[2]["name"], json!("Z"));
         let bins = lines[0]["x"].as_array().unwrap();
         assert!(bins.len() > 32, "{spectrum}");
         let loud = lines[0]["y"].as_array().unwrap().iter().filter_map(|value| value.as_f64()).fold(f64::NEG_INFINITY, f64::max);
         let quiet = lines[1]["y"].as_array().unwrap().iter().filter_map(|value| value.as_f64()).fold(f64::NEG_INFINITY, f64::max);
-        assert!(loud > -1.0, "{spectrum}");
-        assert!(quiet < -40.0, "{spectrum}");
-        let notch = lines.iter().find(|line| line["name"] == "notch").unwrap();
+        // Absolute dB as WebTools shows it: the loud axis stands far above the quiet one.
+        assert!(loud - quiet > 40.0, "{spectrum}");
+        // The filters' gain on its own axis: deep at the 80 Hz notch, flat far from it (no low-pass in this log).
+        let right = spectrum["chart"]["axes"][1]["lines"].as_array().unwrap();
+        let notch = right.iter().find(|line| line["name"] == "filters").unwrap();
+        // A static notch at 80 Hz with only the 1st harmonic: 80 Hz notched, 160 Hz and up not.
+        let marks = right.iter().find(|line| line["name"] == "harmonic, notched").unwrap();
+        assert_eq!(marks["x"][0], json!(80.0), "{marks}");
+        let open = right.iter().find(|line| line["name"] == "harmonic, not notched").unwrap();
+        assert_eq!(open["x"][0], json!(160.0), "{open}");
         assert_eq!(notch["dash"], json!("dot"));
-        let tip = notch["x"].as_array().unwrap().iter().zip(notch["y"].as_array().unwrap()).find(|(hz, _)| (hz.as_f64().unwrap() - 80.0).abs() < 0.2).unwrap();
-        assert!((tip.1.as_f64().unwrap() + 40.0).abs() < 0.2, "{notch}");
-        let edge = notch["x"].as_array().unwrap().iter().zip(notch["y"].as_array().unwrap()).find(|(hz, _)| (hz.as_f64().unwrap() - 60.0).abs() < 0.2).unwrap();
-        assert!(edge.1.as_f64().unwrap().abs() < 0.2, "{notch}");
+        let at = |want: f64| notch["x"].as_array().unwrap().iter().zip(notch["y"].as_array().unwrap())
+            .min_by(|a, b| (a.0.as_f64().unwrap() - want).abs().partial_cmp(&(b.0.as_f64().unwrap() - want).abs()).unwrap())
+            .map(|(_, y)| y.as_f64().unwrap()).unwrap();
+        assert!(at(80.0) < -25.0, "{notch}");
+        assert!(at(300.0) > -1.0, "{notch}");
         assert_eq!(spectrum["slug"], json!("gyro"));
         let map = picture_bytes(&buf, "spectrogram", &json!({}));
         assert_eq!(map["chart"]["x_label"], json!("s"), "{map}");
@@ -256,7 +264,9 @@ mod tests {
         assert_eq!(z[0].as_array().unwrap().len(), map["chart"]["heatmap"]["x"].as_array().unwrap().len());
         let mut loud_hz = 0.0;
         let mut loud_db = -80.0;
-        for (row, freq) in z.iter().zip(hz.iter()) {
+        // Below 20 Hz is the motion the test adds: drawn, but not the 0 dB reference.
+        assert!(hz[0].as_f64().unwrap() < 20.0, "{map}");
+        for (row, freq) in z.iter().zip(hz.iter()).filter(|(_, freq)| freq.as_f64().unwrap() >= 20.0) {
             let db = row[0].as_f64().unwrap();
             if db > loud_db {
                 loud_db = db;
@@ -264,7 +274,9 @@ mod tests {
             }
         }
         assert!((loud_hz - 80.0).abs() < 8.0, "{map}");
-        assert!((loud_db - 0.0).abs() < 0.2, "{map}");
+        let top = map["chart"]["heatmap"]["z_max"].as_f64().unwrap();
+        assert!(loud_db <= top && loud_db > top - 5.0, "{map}");
+        assert_eq!(map["chart"]["heatmap"]["z_min"].as_f64().unwrap(), top - 50.0);
         let missing = picture_bytes(&[], "spectrum", &json!({}));
         assert_eq!(missing["ok"], json!(false));
         assert_eq!(gyro_picture("", "spectrum", &json!({}))["ok"], json!(false));
@@ -1228,15 +1240,27 @@ mod tests {
         let (gain_far, _) = notch_response(150.0, 50.0, 1000.0, 30.0);
         assert!((gain_far - 1.0).abs() < 0.25, "Passband gain should be near 1.0, was {gain_far}");
 
-        let mut spectrum = Vec::new();
-        for f in 20..400 {
-            let f_f64 = f as f64;
-            let amp = if (f_f64 - 150.0).abs() < 10.0 { 10.0 } else { 1.0 };
-            spectrum.push((f_f64, amp));
-        }
-        let sim = simulate_filter(150.0, 50.0, 1, 40.0, 1000.0, &spectrum);
-        assert!(sim.noise_attenuation_db > 10.0, "Attenuation should exceed 10 dB: {}", sim.noise_attenuation_db);
-        assert!(sim.phase_delay_at_30hz_ms < 8.0, "Phase delay at 30 Hz should be reasonable: {}", sim.phase_delay_at_30hz_ms);
+        // A motor line at 100 Hz with loud 2nd and 3rd harmonics on a quiet floor.
+        let spectrum: Vec<(f64, f64)> = (20..1000).map(|f| {
+            let f = f as f64;
+            let amp = if [100.0, 200.0, 300.0].iter().any(|h| (f - h).abs() < 4.0) { 10.0 } else { 0.01 };
+            (f, amp)
+        }).collect();
+        let plan = |hmncs: u32, lpf: f64| NotchPlan { enable: true, mode: 3, freq: 80.0, bw: 40.0, att: 40.0, hmncs, opts: 0, lpf };
+        let two = plan(3, 40.0);
+        let three = plan(7, 40.0);
+        let two_centres = notch_centres(&two, 100.0, &[]);
+        let three_centres = notch_centres(&three, 100.0, &[]);
+        let now = plan_result(&two, &two_centres, 2000.0, &spectrum);
+        assert!(now.noise_attenuation_db > 10.0, "{}", now.noise_attenuation_db);
+        assert!(now.phase_delay_at_30hz_ms < 8.0, "{}", now.phase_delay_at_30hz_ms);
+        // Notching the 3rd harmonic leaves less noise, so the low-pass can rise with the noise no worse.
+        let left = residual_power(&two, &two_centres, 40.0, 2000.0, &spectrum);
+        assert!(residual_power(&three, &three_centres, 40.0, 2000.0, &spectrum) < left);
+        assert!([45.0, 50.0, 55.0, 60.0].iter().any(|lpf| residual_power(&three, &three_centres, *lpf, 2000.0, &spectrum) <= left));
+        // A higher low-pass is less delay at 30 Hz.
+        let raised = plan_result(&plan(7, 60.0), &three_centres, 2000.0, &spectrum);
+        assert!(raised.phase_delay_at_30hz_ms < plan_result(&three, &three_centres, 2000.0, &spectrum).phase_delay_at_30hz_ms);
     }
 
     #[test]

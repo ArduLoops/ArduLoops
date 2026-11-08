@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BoardView } from "./components/BoardView";
+import { boardTitle, fetchBoards, type BoardRow } from "./lib/boards";
+import { splitNote } from "./lib/vehicleHeader";
 import { type LogRow } from "./components/Aside";
 import { Assistant } from "./components/Assistant";
 import { SetupStatusFeed } from "./components/HardwareSetup";
@@ -41,6 +44,7 @@ type Shell = "home" | "copter" | "plane";
 
 type ShellFace = {
   ok: boolean;
+  uid: string;
   rebooting: boolean;
   frame: string;
   detail: string;
@@ -55,6 +59,7 @@ function shellFace(s: Sample): ShellFace {
   const sitl = isSitl(s.params) || !!s.sitl_running;
   return {
     ok: s.ok,
+    uid: s.ok ? s.boot_uid ?? "" : "",
     rebooting: !!s.rebooting,
     frame: s.frame,
     detail: s.detail || "",
@@ -69,6 +74,7 @@ function shellFace(s: Sample): ShellFace {
 function sameFace(a: ShellFace, b: ShellFace): boolean {
   return (
     a.ok === b.ok &&
+    a.uid === b.uid &&
     a.rebooting === b.rebooting &&
     a.frame === b.frame &&
     a.detail === b.detail &&
@@ -88,6 +94,20 @@ function frameFromUrl(): Shell | null {
   if (f === "copter" || f === "plane") return f;
   return null;
 }
+
+function boardFromUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("board") || null;
+}
+
+function writeBoardUrl(board: string | null) {
+  const u = new URL(window.location.href);
+  if (board) u.searchParams.set("board", board);
+  else u.searchParams.delete("board");
+  window.history.replaceState({}, "", u);
+}
+
+const BOARD_WHEN = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
 function writeFrameUrl(shell: Shell) {
   const u = new URL(window.location.href);
@@ -135,12 +155,22 @@ function ShellPicker({
   value,
   idle,
   title,
+  board,
+  boards,
+  linkedKey,
   onPick,
+  onBoard,
+  onOpen,
 }: {
   value: Shell;
   idle: boolean;
   title: string;
+  board: string | null;
+  boards: BoardRow[];
+  linkedKey: string;
   onPick: (next: Shell) => void;
+  onBoard: (key: string) => void;
+  onOpen: () => void;
 }) {
   const t = useT();
   const box = useRef<HTMLDetailsElement>(null);
@@ -154,28 +184,56 @@ function ShellPicker({
     window.addEventListener("pointerdown", onPtr);
     return () => window.removeEventListener("pointerdown", onPtr);
   }, []);
+  const close = () => {
+    if (box.current) box.current.open = false;
+  };
+  const name = (row: BoardRow) => boardTitle(row, (c) => splitNote(c).title);
+  const linkedRow = linkedKey ? boards.find((row) => row.key === linkedKey) : undefined;
+  const others = boards.filter((row) => row.key !== linkedKey);
+  const openRow = board ? boards.find((row) => row.key === board) : undefined;
+  const label = board ? (openRow ? name(openRow) : t("Board")) : value === "home" ? t("Home") : t(value);
+  const sub = (row: BoardRow) =>
+    [row.board_name, row.vehicle, row.last_seen ? BOARD_WHEN.format(new Date(row.last_seen * 1000)) : "",
+      t("{n} logs", { n: row.logs }), t("{n} chats", { n: row.chats })].filter(Boolean).join(" · ");
   return (
     <details
       ref={box}
-      className={idle ? "hdr-shell idle" : "hdr-shell"}
+      className={idle && !board ? "hdr-shell idle" : "hdr-shell"}
+      onToggle={(ev) => {
+        if ((ev.currentTarget as HTMLDetailsElement).open) onOpen();
+      }}
     >
-      <summary aria-label={t("View")} title={title}>
-        {value === "home" ? t("Home") : t(value)}
+      <summary aria-label={t("View")} title={board ? t("A board from the database") : title}>
+        {label}
       </summary>
-      <div className="hdr-shell-menu" role="listbox" aria-label={t("View")}>
-        {SHELLS.map((v) => (
-          <button
-            key={v}
-            type="button"
-            role="option"
-            aria-selected={value === v}
-            className={value === v ? "on" : undefined}
-            onClick={() => {
-              onPick(v);
-              if (box.current) box.current.open = false;
-            }}
-          >
-            {v === "home" ? t("Home") : t(v)}
+      <div className="hdr-shell-menu wide" role="listbox" aria-label={t("View")}>
+        <button type="button" role="option" aria-selected={!board && value === "home"} className={!board && value === "home" ? "on" : undefined}
+          onClick={() => { onPick("home"); close(); }}>
+          {t("Home")}
+        </button>
+        {linkedRow ? (
+          <>
+            <i className="hdr-shell-sep">{t("On the link")}</i>
+            <button type="button" role="option" aria-selected={!board && value !== "home"} className={!board && value !== "home" ? "on board-opt" : "board-opt"}
+              onClick={() => { onPick(linkedRow.vehicle === "plane" ? "plane" : "copter"); close(); }}>
+              <b>{name(linkedRow)}</b>
+              <small>{sub(linkedRow)}</small>
+            </button>
+          </>
+        ) : null}
+        {others.length ? <i className="hdr-shell-sep">{t("Saved boards")}</i> : null}
+        {others.map((row) => (
+          <button key={row.key} type="button" role="option" aria-selected={board === row.key} className={board === row.key ? "on board-opt" : "board-opt"}
+            onClick={() => { onBoard(row.key); close(); }}>
+            <b>{name(row)}</b>
+            <small>{sub(row)}</small>
+          </button>
+        ))}
+        <i className="hdr-shell-sep">{t("Views")}</i>
+        {SHELLS.filter((v) => v !== "home").map((v) => (
+          <button key={v} type="button" role="option" aria-selected={!board && value === v} className={!board && value === v ? "on" : undefined}
+            onClick={() => { onPick(v); close(); }}>
+            {t(v)}
           </button>
         ))}
       </div>
@@ -195,6 +253,14 @@ export function App() {
   const [sitlOpen, setSitlOpen] = useState(false);
   const [release, setRelease] = useState<AppRelease | null>(null);
   const [pick, setPick] = useState<Shell | null>(() => frameFromUrl());
+  const [board, setBoard] = useState<string | null>(() => boardFromUrl());
+  const [boards, setBoards] = useState<BoardRow[]>([]);
+  const refreshBoards = useCallback(() => {
+    void fetchBoards().then(setBoards).catch(() => {});
+  }, []);
+  useEffect(() => {
+    refreshBoards();
+  }, [refreshBoards, face.uid]);
   const refreshSerialPorts = useRef<() => void>(() => {});
   const paused = isPaused();
   const lastLive = useRef<Shell | null>(null);
@@ -383,7 +449,15 @@ export function App() {
   const initPct = initTotal > 0 ? Math.min(100, Math.round((100 * initDone) / initTotal)) : 0;
   const android = isAndroid();
 
+  // A board opened from the database becomes the live screen once it is the board on the link.
+  const boardOpen = board && board !== face.uid ? board : null;
+  function openBoard(key: string | null) {
+    setBoard(key);
+    writeBoardUrl(key);
+  }
+
   function onShell(next: Shell) {
+    openBoard(null);
     setPick(next);
     writeFrameUrl(next);
     addLog(next === "home" ? t("Home") : t(next), "cmd");
@@ -406,18 +480,17 @@ export function App() {
         {android ? null : (
           <button
             type="button"
-            className={sitlOpen ? "sitl-btn on" : "sitl-btn"}
+            className={["sitl-btn", sitlOpen ? "on" : "", linked && sitl ? "live" : ""].filter(Boolean).join(" ")}
             aria-pressed={sitlOpen}
             aria-expanded={sitlOpen}
             onClick={() => setSitlOpen((on) => !on)}
-            title={t("Simulation")}
+            title={linked && sitl ? t("Simulation · on the link") : t("Simulation")}
           >
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
               <rect x="3" y="4" width="18" height="16" rx="2" />
               <path d="M9 4v16" />
             </svg>
             {t("SITL")}
-            {linked && sitl ? <i className="sitl-live" aria-hidden="true" /> : null}
           </button>
         )}
         <div className="hdr-title">
@@ -447,12 +520,19 @@ export function App() {
                     ? t("View")
                     : t("Idle · this frame is not on the link")
               }
+              board={boardOpen}
+              boards={boards}
+              linkedKey={face.uid}
               onPick={onShell}
+              onBoard={(key) => openBoard(key)}
+              onOpen={refreshBoards}
             />
           </h1>
         </div>
         <p className="sub">
-          {shell === "home"
+          {boardOpen
+            ? t("A board from the database: its note, saved parameters, logs and chats. Nothing here writes to a vehicle.")
+            : shell === "home"
             ? t("Link a vehicle. HEARTBEAT picks copter or plane. The wiki is the protocol — this stand shows the loops.")
             : !shellAlive
               ? plane
@@ -533,7 +613,11 @@ export function App() {
         onClose={() => setLabOpen(false)}
         onSave={onLabSave}
       />
-          {shell === "home" ? null : plane ? (
+          {boardOpen ? (
+        <main className="board-main">
+          <BoardView boardKey={boardOpen} onClose={() => openBoard(null)} />
+        </main>
+      ) : shell === "home" ? null : plane ? (
         <VehicleView vehicle="plane">
           <PlaneApp log={log} />
         </VehicleView>
@@ -550,7 +634,7 @@ export function App() {
         <BoardWindow />
       </VehicleView>
       <ImageViewerHost />
-      <Assistant home={shell === "home"} onOpenOptions={() => setLabOpen(true)} onOpenHome={() => onShell("home")} />
+      <Assistant home={shell === "home" && !boardOpen} onOpenOptions={() => setLabOpen(true)} onOpenHome={() => onShell("home")} />
       {import.meta.env.DEV && <StudioRecorder />}
     </div>
   );

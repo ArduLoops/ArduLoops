@@ -19,11 +19,11 @@ pub fn logs_root() -> PathBuf {
 pub fn list_logs() -> Value {
     let root = logs_root();
     let mut rows = Vec::new();
+    let before = read_facts();
+    let mut facts = before.clone();
     let Ok(vehicles) = fs::read_dir(&root) else {
         return json!({ "source": "downloaded", "logs": rows });
     };
-    let before = read_facts();
-    let mut facts = before.clone();
     let mut kept = serde_json::Map::new();
     for vehicle in vehicles.flatten() {
         let Ok(files) = fs::read_dir(vehicle.path()) else { continue };
@@ -145,16 +145,15 @@ fn boot_line(bytes: &[u8]) -> Option<(String, String)> {
     let mut found = None;
     find_record(bytes, &formats, "MSG", |fmt, values| {
         let Some(text) = field_str(fmt, values, "Message") else { return false };
-        let Some(uid) = system_uid(&text) else { return false };
-        let name = text.split_whitespace().next().unwrap_or("").to_string();
-        found = Some((name, uid));
+        let Some(identity) = crate::link::boot_identity(&text) else { return false };
+        found = Some(identity);
         true
     });
     found
 }
 
 /// Directory name for a file the user loaded: the boot uid written in the log.
-fn vehicle_dir(bytes: &[u8]) -> String {
+pub(crate) fn vehicle_dir(bytes: &[u8]) -> String {
     let uid = boot_line(bytes).map(|(_, uid)| uid).unwrap_or_default();
     let key: String = uid.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     if key.is_empty() { "imported".to_string() } else { key }
@@ -189,18 +188,6 @@ fn log_fact(facts: &mut serde_json::Map<String, Value>, path: &std::path::Path, 
     });
     facts.insert(id.to_string(), fact.clone());
     fact
-}
-
-fn system_uid(message: &str) -> Option<String> {
-    let mut words = message.split_whitespace();
-    let name = words.next()?;
-    if !name.contains('_') || name.len() > 64 {
-        return None;
-    }
-    let uid: String = words
-        .filter(|part| part.len() >= 4 && part.len() <= 16 && part.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .collect();
-    if uid.is_empty() { None } else { Some(uid) }
 }
 
 fn find_stored_hash(hash: &str) -> Option<String> {

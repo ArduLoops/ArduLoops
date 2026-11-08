@@ -57,12 +57,25 @@ export function stickPos(raw: number, e: Ends, stick: Stick): number {
 }
 
 /** Common RCn_OPTION values by name; anything else shows as its number. */
+/**
+ * The aux functions offered per vehicle when picking what a channel does. RCx_OPTION 41 is deprecated in favour of 153.
+ * A board may hold others; the picker keeps a value it does not list.
+ */
+export const AUX_PICK: Record<"copter" | "plane", number[]> = {
+  copter: [2, 3, 4, 5, 7, 9, 11, 13, 16, 17, 18, 19, 21, 22, 24, 28, 31, 32, 37, 38, 39, 40, 42, 46, 52, 55, 56, 57, 58, 61, 62, 65, 66, 68, 69, 70, 71, 72, 73, 81, 83, 84, 90, 94, 102, 153, 154, 165, 167, 212, 213, 214],
+  plane: [4, 9, 11, 16, 24, 28, 31, 46, 55, 56, 58, 62, 65, 66, 72, 81, 90, 94, 102, 106, 107, 108, 153, 165, 167, 210, 212, 213, 214],
+};
+
+/** RCx_OPTION names as the firmware's parameter docs (and Mission Planner) give them; not translated. */
 export const AUX_NAMES: Record<number, string> = {
-  2: "Flip", 3: "Simple mode", 4: "RTL", 5: "Save trim", 7: "Save waypoint", 9: "Camera trigger", 11: "Fence", 13: "Super simple", 16: "Auto", 17: "AutoTune",
-  18: "Land", 19: "Gripper", 21: "Parachute", 22: "Parachute release", 28: "Relay", 31: "Motor emergency stop", 32: "Motor interlock", 37: "Throw", 38: "Avoid ADS-B",
-  39: "Precision loiter", 40: "Avoid proximity", 41: "Arm / disarm", 42: "SmartRTL", 46: "RC override", 52: "Acro", 55: "Guided", 56: "Loiter", 57: "Follow",
-  58: "Clear waypoints", 61: "Zigzag", 62: "Compass learn", 65: "GPS disable", 66: "Relay 2", 68: "Stabilize", 69: "PosHold", 70: "AltHold", 71: "FlowHold",
-  72: "Circle", 73: "Drift", 81: "Disarm", 83: "ZigZag auto", 84: "Air mode", 90: "EKF source", 94: "VTX power", 99: "Auto mission reset", 100: "KillIMU1",
-  101: "KillIMU2", 102: "Camera mode", 105: "GPS disable yaw", 109: "Weathervane", 153: "Arm / disarm", 154: "Arm / disarm (air mode)", 165: "Arm / emergency stop",
-  174: "Camera zoom", 210: "Airbrake", 212: "Mount 1 roll", 213: "Mount 1 pitch", 214: "Mount 1 yaw",
+  2: "Flip", 3: "Simple Mode", 4: "RTL", 5: "Save Trim", 7: "Save WP", 9: "Camera Trigger", 11: "Fence", 13: "Super Simple Mode",
+  16: "Auto", 17: "AutoTune", 18: "Land", 19: "Gripper", 21: "Parachute Enable", 22: "Parachute Release", 24: "Auto Mission Reset",
+  28: "Relay On/Off", 31: "Motor Emergency Stop", 32: "Motor Interlock", 37: "Throw", 38: "ADSB Avoidance En", 39: "PrecLoiter",
+  40: "Proximity Avoidance", 41: "ArmDisarm (4.1 and lower)", 42: "SmartRTL", 46: "RC Override Enable", 52: "Acro", 55: "Guided",
+  56: "Loiter", 57: "Follow", 58: "Clear Waypoints", 61: "ZigZag", 62: "Compass Learn", 65: "GPS Disable", 66: "Relay2 On/Off",
+  68: "Stabilize", 69: "PosHold", 70: "AltHold", 71: "FlowHold", 72: "Circle", 73: "Drift", 81: "Disarm", 83: "ZigZag Auto",
+  84: "Air Mode", 90: "EKF Source Set", 94: "VTX Power", 100: "KillIMU1", 101: "KillIMU2", 102: "Camera Mode Toggle",
+  105: "GPS Disable Yaw", 106: "Disable Airspeed Use", 107: "Enable FW Autotune", 108: "QRTL", 153: "ArmDisarm (4.2)",
+  154: "ArmDisarm with AirMode (4.2)", 165: "Arm/Emergency Motor Stop", 167: "Camera Zoom", 210: "Airbrakes",
+  212: "Mount1 Roll", 213: "Mount1 Pitch", 214: "Mount1 Yaw",
 };

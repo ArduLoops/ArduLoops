@@ -772,6 +772,13 @@ fn run_tool(
             _ => firmware_call("build", args),
         }
         "firmware_library" => bridge_get("/firmware-library", 15),
+        "board_list" => {
+            let linked = if sample.ok { sample.boot_uid.as_str() } else { "" };
+            let mut out = crate::db::boards(linked).unwrap_or_else(|error| json!({ "boards": [], "error": error }));
+            out["note"] = json!("`key` is the board's MCU UID, the id for `board_summary`. `linked: true` is the board on the link now. `comment` is the user's note; its first line is the name. `profile` is what the user saved about the airframe. `params` is how many parameters were saved and `params_at` when (unix seconds). `logs` counts the logs on this computer, `chats` the assistant chats about this board. `last_seen` is unix seconds.");
+            out
+        }
+        "board_summary" => board_summary_tool(args, sample),
         "vehicle_comment" => {
             let comment = args.get("comment").and_then(|v| v.as_str()).unwrap_or("").trim();
             if comment.chars().count() > 2_000 {
@@ -1171,6 +1178,75 @@ fn arg_strings(args: &Value, plural: &str, single: &str, limit: usize) -> Vec<St
     }
     names.truncate(limit);
     names
+}
+
+/// One board from the database: note, profile, saved parameters (all, filtered, or only those
+/// that differ from the board on the link) and its logs on this computer.
+fn board_summary_tool(args: &Value, sample: &Sample) -> Value {
+    let key = args["key"].as_str().unwrap_or("").trim();
+    if key.is_empty() {
+        return json!({ "ok": false, "error": "key is required; take it from board_list" });
+    }
+    let linked = if sample.ok { sample.boot_uid.as_str() } else { "" };
+    let boards = crate::db::boards(linked).unwrap_or_else(|_| json!({ "boards": [] }));
+    let Some(board) = boards["boards"].as_array().and_then(|rows| rows.iter().find(|row| row["key"] == key)).cloned() else {
+        return json!({ "ok": false, "error": "No board with this key; take it from board_list" });
+    };
+    let saved = crate::db::board_params(key).unwrap_or_else(|_| json!({ "params": {} }));
+    let empty = serde_json::Map::new();
+    let values = saved["params"].as_object().unwrap_or(&empty);
+    let glob = args["glob"].as_str().map(str::trim).filter(|s| !s.is_empty());
+    let prefix = args["prefix"].as_str().unwrap_or("").trim().to_ascii_uppercase();
+    let wanted = |name: &str| match glob {
+        Some(pattern) => crate::http::glob_match(pattern, name),
+        None => name.to_ascii_uppercase().starts_with(&prefix),
+    };
+    let compare = args["compare"].as_bool().unwrap_or(false);
+    let mut rows: Vec<Value> = Vec::new();
+    if compare {
+        let book = param_book(sample);
+        let mut names: Vec<&String> = values.keys().chain(book.values.keys()).collect();
+        names.sort();
+        names.dedup();
+        for name in names {
+            if !wanted(name) {
+                continue;
+            }
+            let there = values.get(name).and_then(Value::as_f64);
+            let here = book.values.get(name).map(|seen| seen.value);
+            let same = matches!((there, here), (Some(a), Some(b)) if (a - b).abs() <= 1e-6 * a.abs().max(b.abs()).max(1.0));
+            if !same {
+                rows.push(json!({ "name": name, "saved": there, "linked": here }));
+            }
+        }
+    } else {
+        let mut names: Vec<&String> = values.keys().filter(|name| wanted(name)).collect();
+        names.sort();
+        rows = names.into_iter().map(|name| json!({ "name": name, "value": values[name] })).collect();
+    }
+    let total = rows.len();
+    rows.truncate(2_000);
+    let logs: Vec<Value> = crate::dflog::local_logs()["logs"]
+        .as_array()
+        .map(|all| {
+            all.iter()
+                .filter(|log| log["vehicle"] == key)
+                .take(20)
+                .map(|log| json!({ "id": log["id"], "saved_at": log["saved_at"], "flight_utc": log["flight_utc"], "bytes": log["bytes"], "note": log["note"] }))
+                .collect()
+        })
+        .unwrap_or_default();
+    json!({
+        "board": board,
+        "params_saved_at": saved["saved_at"],
+        "compare": compare,
+        "linked_board": linked,
+        "count": total,
+        "truncated": total > 2_000,
+        "params": rows,
+        "logs": logs,
+        "note": "`params` are the values saved when this board was last linked, not live values. With `compare`, each row has `saved` (this board) and `linked` (the board on the link now); null means that board has no such parameter. With no board on the link, `linked` is the last saved set of the link. `logs` are the newest 20 on this computer; `id` goes to the log tools. A change to the board on the link goes through `set_param`, `vehicle_comment`, or `profile_widget`, each with its own confirmation.",
+    })
 }
 
 fn log_inspect_tool(args: &Value, file: &str) -> Value {

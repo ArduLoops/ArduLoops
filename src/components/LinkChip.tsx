@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { tDetail, useT } from "../i18n/i18n";
-import { formatLink, linkLabel, parseLink, type LinkKind } from "../mav/link";
+import { APP_HTTP, formatLink, linkLabel, parseLink, type LinkKind } from "../mav/link";
+import { splitNote } from "../lib/vehicleHeader";
+import { VEHICLE_SAVED } from "./ControllerBoard";
 import { useStorePicked } from "../mav/view";
 
 type Frame = "copter" | "plane";
@@ -134,6 +136,9 @@ export function LinkChip({
       ? t("Loading as a list: this link has no parameter file")
       : "";
   const source = sourceKnown ? (sitl ? t("SITL") : t("board")) : null;
+  // On the chip, the controller by name: the note's first line, else the board name. A simulator
+  // is shown by the lit SITL button instead.
+  const name = useControllerName(linked && !sitl);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -183,9 +188,9 @@ export function LinkChip({
     label = (
       <>
         {live ? <span className="lc-frame">{t(live)}</span> : null}
-        {source ? <span className={sitl ? "lc-src sitl" : "lc-src board"}>{source}</span> : null}
+        {name ? <span className="lc-name" title={name}>{name}</span> : null}
         {tel.hz ? <span className="lc-hz">{tel.hz} Hz</span> : null}
-        {!live && !source && !tel.hz ? <span>{t("Linked")}</span> : null}
+        {!live && !name && !tel.hz ? <span>{t("Linked")}</span> : null}
       </>
     );
     // On Home the vehicle on the link is one click away.
@@ -382,4 +387,33 @@ export function LinkChip({
         : null}
     </>
   );
+}
+
+/** The linked controller's name: its note's first line, else its board name. */
+function useControllerName(on: boolean): string {
+  const id = useStorePicked((s) => (s.ok ? `${s.boot_uid ?? ""}|${s.board_name ?? ""}` : ""));
+  const board = id.split("|")[1] ?? "";
+  const [title, setTitle] = useState("");
+  useEffect(() => {
+    if (!on || !id) {
+      setTitle("");
+      return;
+    }
+    let ac = new AbortController();
+    const load = () => {
+      ac.abort();
+      ac = new AbortController();
+      void fetch(`${APP_HTTP}/firmware-library`, { cache: "no-store", signal: ac.signal })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((value: { controller?: { comment?: string } | null } | null) => setTitle(splitNote(value?.controller?.comment).title))
+        .catch(() => {});
+    };
+    load();
+    window.addEventListener(VEHICLE_SAVED, load);
+    return () => {
+      ac.abort();
+      window.removeEventListener(VEHICLE_SAVED, load);
+    };
+  }, [on, id]);
+  return on ? title || board : "";
 }

@@ -50,7 +50,7 @@ mod normalize_tests {
 #[cfg(test)]
 mod diagnostics_tests {
     use super::*;
-    use mavlink::ardupilotmega::{MavResult, COMMAND_ACK_DATA, OPTICAL_FLOW_DATA};
+    use mavlink::dialects::ardupilotmega::{MavResult, COMMAND_ACK_DATA, OPTICAL_FLOW_DATA};
 
     #[test]
     fn flowhold_mode_roundtrip() {
@@ -74,6 +74,7 @@ mod diagnostics_tests {
             MavMessage::COMMAND_ACK(COMMAND_ACK_DATA {
                 command: MavCmd::MAV_CMD_DO_SET_MODE,
                 result: MavResult::MAV_RESULT_FAILED,
+                ..Default::default()
             }),
         );
         assert_eq!(
@@ -104,7 +105,7 @@ mod diagnostics_tests {
 #[cfg(test)]
 mod live_buffer_tests {
     use super::{handle_msg, live_meta, wall_time, with_live_cleared, LinkState, Sample};
-    use mavlink::ardupilotmega::{
+    use mavlink::dialects::ardupilotmega::{
         ATTITUDE_DATA, DISTANCE_SENSOR_DATA, ESC_TELEMETRY_1_TO_4_DATA, GLOBAL_POSITION_INT_DATA, OPTICAL_FLOW_DATA,
         RANGEFINDER_DATA, SIM_STATE_DATA, SIMSTATE_DATA, MavMessage,
     };
@@ -112,7 +113,7 @@ mod live_buffer_tests {
 
     #[test]
     fn bitflags_and_prearm_lines_reach_the_sample() {
-        use mavlink::ardupilotmega::{
+        use mavlink::dialects::ardupilotmega::{
             EkfStatusFlags, MavSeverity, MavSysStatusSensor, EKF_STATUS_REPORT_DATA, STATUSTEXT_DATA, SYS_STATUS_DATA,
         };
         let mut st = LinkState::new();
@@ -144,7 +145,7 @@ mod live_buffer_tests {
         let text = |s: &str| {
             let mut buf = [0u8; 50];
             buf[..s.len()].copy_from_slice(s.as_bytes());
-            MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity: MavSeverity::MAV_SEVERITY_CRITICAL, text: buf, ..Default::default() })
+            MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity: MavSeverity::MAV_SEVERITY_CRITICAL, text: buf.into(), ..Default::default() })
         };
         handle_msg(&mut st, &hdr, text("PreArm: Compass not calibrated"));
         handle_msg(&mut st, &hdr, text("PreArm: Battery 1 below minimum arming voltage"));
@@ -158,7 +159,7 @@ mod live_buffer_tests {
         let mut buf = [0u8; 50];
         let skipped = "PreArm: Logging failed";
         buf[..skipped.len()].copy_from_slice(skipped.as_bytes());
-        handle_msg(&mut st, &hdr, MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity: MavSeverity::MAV_SEVERITY_DEBUG, text: buf, ..Default::default() }));
+        handle_msg(&mut st, &hdr, MavMessage::STATUSTEXT(STATUSTEXT_DATA { severity: MavSeverity::MAV_SEVERITY_DEBUG, text: buf.into(), ..Default::default() }));
         assert_eq!(st.sample.prearm.len(), 2);
         assert_eq!(st.sample.prearm_skipped.iter().map(|line| line.text.as_str()).collect::<Vec<_>>(), [skipped]);
     }
@@ -329,7 +330,7 @@ mod live_buffer_tests {
         handle_msg(
             &mut st,
             &hdr,
-            MavMessage::NAMED_VALUE_FLOAT(mavlink::ardupilotmega::NAMED_VALUE_FLOAT_DATA {
+            MavMessage::NAMED_VALUE_FLOAT(mavlink::dialects::ardupilotmega::NAMED_VALUE_FLOAT_DATA {
                 time_boot_ms: 10,
                 value: 3.5,
                 name: name10("TUT_TICK"),
@@ -338,7 +339,7 @@ mod live_buffer_tests {
         handle_msg(
             &mut st,
             &hdr,
-            MavMessage::NAMED_VALUE_FLOAT(mavlink::ardupilotmega::NAMED_VALUE_FLOAT_DATA {
+            MavMessage::NAMED_VALUE_FLOAT(mavlink::dialects::ardupilotmega::NAMED_VALUE_FLOAT_DATA {
                 time_boot_ms: 20,
                 value: 9.0,
                 name: name10("OTHER"),
@@ -351,7 +352,7 @@ mod live_buffer_tests {
         handle_msg(
             &mut st,
             &hdr,
-            MavMessage::NAMED_VALUE_INT(mavlink::ardupilotmega::NAMED_VALUE_INT_DATA {
+            MavMessage::NAMED_VALUE_INT(mavlink::dialects::ardupilotmega::NAMED_VALUE_INT_DATA {
                 time_boot_ms: 30,
                 value: 4,
                 name: name10("TUT_N"),
@@ -361,7 +362,7 @@ mod live_buffer_tests {
         handle_msg(
             &mut st,
             &hdr,
-            MavMessage::NAMED_VALUE_FLOAT(mavlink::ardupilotmega::NAMED_VALUE_FLOAT_DATA {
+            MavMessage::NAMED_VALUE_FLOAT(mavlink::dialects::ardupilotmega::NAMED_VALUE_FLOAT_DATA {
                 value: 1.0,
                 name: name10("bad name"),
                 ..Default::default()
@@ -374,12 +375,12 @@ mod live_buffer_tests {
         assert_eq!(label, "TUT_TICK");
     }
 
-    fn name10(text: &str) -> [u8; 10] {
+    fn name10(text: &str) -> mavlink::types::CharArray<10> {
         let mut name = [0u8; 10];
         let bytes = text.as_bytes();
         let n = bytes.len().min(10);
         name[..n].copy_from_slice(&bytes[..n]);
-        name
+        name.into()
     }
 }
 
@@ -491,10 +492,11 @@ mod param_file_tests {
 
 #[cfg(test)]
 mod reboot_wait {
-    use super::{reboot_gap, reboot_heartbeat, reboot_started, rebooting, wall_time};
+    use super::{reboot_back_at, reboot_gap, reboot_heartbeat, reboot_started, rebooting, wall_time};
 
     #[test]
     fn a_reboot_ends_on_a_heartbeat_after_the_gap() {
+        let sent = wall_time();
         reboot_started();
         assert!(rebooting());
         // Heartbeats before the link goes quiet are the old boot.
@@ -503,8 +505,10 @@ mod reboot_wait {
         reboot_gap();
         reboot_heartbeat(wall_time() - 1.0);
         assert!(rebooting());
+        assert!(reboot_back_at() < sent, "not back before the new heartbeat");
         reboot_heartbeat(wall_time() + 1.0);
         assert!(!rebooting());
+        assert!(reboot_back_at() >= sent - 0.001, "the return time is what a waiting caller reads");
     }
 }
 
@@ -603,7 +607,7 @@ mod param_file_live {
                 let hb = matches!(msg, MavMessage::HEARTBEAT(_)) && hdr.component_id == 1;
                 handle_msg(&mut st, &hdr, msg);
                 if hb {
-                    st.target_system = hdr.system_id;
+                    st.target_system = hdr.system_id as u8;
                     st.target_component = hdr.component_id;
                     return (conn, st);
                 }
@@ -787,5 +791,127 @@ mod param_file_session_live {
         let hz: Vec<u32> = g.iter().filter(|(_, s)| s.ok).map(|(_, s)| s.att_hz).collect();
         println!("att_hz from {} to {}", hz.iter().min().unwrap_or(&0), hz.iter().max().unwrap_or(&0));
         assert!(last.param_file.contains(" in "), "file download did not run: {}", last.param_file);
+    }
+}
+
+#[cfg(test)]
+mod log_end_tests {
+    use super::*;
+
+    fn downloading(size: usize) -> LinkState {
+        let mut st = LinkState::new();
+        let now = Instant::now();
+        st.active_log_download = Some(ActiveLogDownload {
+            id: 4,
+            size,
+            bytes: vec![0; size],
+            received: vec![0; size.div_ceil(LOG_BLOCK).div_ceil(64)],
+            received_chunks: 0,
+            started: now,
+            last_data: now,
+            last_request: now,
+            requested: (0, 0),
+            peek_head: 0,
+            peek_tail: 0,
+        });
+        st
+    }
+
+    fn log_data(st: &mut LinkState, ofs: u32, count: u8) {
+        let header = MavHeader { system_id: st.target_system.into(), component_id: st.target_component, sequence: 0 };
+        let msg = MavMessage::LOG_DATA(LOG_DATA_DATA { ofs, id: 4, count, data: [7; 90] });
+        handle_msg(st, &header, msg);
+    }
+
+    #[test]
+    fn an_unreadable_log_fails_at_once() {
+        let mut st = downloading(246);
+        log_data(&mut st, 0, 0);
+        assert!(st.active_log_download.is_none());
+        let report = st.sample.log_download.expect("report");
+        assert!(report.complete);
+        assert_eq!(report.error, NO_LOG_DATA);
+    }
+
+    #[test]
+    fn nearby_gaps_go_in_one_request_and_far_ones_do_not() {
+        let mut st = downloading(90 * 100);
+        let active = st.active_log_download.as_mut().unwrap();
+        for chunk in 0..100 {
+            if ![10, 14, 40].contains(&chunk) {
+                mark_log_bit(&mut active.received, chunk);
+            }
+        }
+        // 10 and 14 are 4 chunks apart: one request. 40 is far: the next one.
+        assert_eq!(next_log_request(active), Some((900, 450)));
+        active.requested = (900, 1350);
+        assert!(!requested_range_done(active));
+        mark_log_bit(&mut active.received, 10);
+        mark_log_bit(&mut active.received, 14);
+        assert!(requested_range_done(active));
+        assert_eq!(next_log_request(active), Some((3600, 90)));
+    }
+
+    #[test]
+    fn a_log_shorter_than_listed_completes_where_it_ends() {
+        let mut st = downloading(246);
+        log_data(&mut st, 0, 90);
+        log_data(&mut st, 90, 0);
+        let active = st.active_log_download.as_ref().expect("active");
+        assert_eq!(active.size, 90);
+        assert_eq!(active.bytes.len(), 90);
+        assert!(log_download_complete(active));
+    }
+}
+
+#[cfg(test)]
+mod boot_identity_tests {
+    use super::{boot_identity, mcu_uid};
+
+    #[test]
+    fn the_uid2_bytes_read_as_the_banner_writes_them() {
+        let mut uid2 = [0u8; 18];
+        uid2[..12].copy_from_slice(&[0x39, 0x00, 0x4B, 0x00, 0x15, 0x51, 0x34, 0x30, 0x39, 0x33, 0x39, 0x37]);
+        assert_eq!(mcu_uid(&uid2).as_deref(), Some("004B00393034511537393339"));
+        assert_eq!(mcu_uid(&[0; 18]), None);
+        assert_eq!(mcu_uid(b"0123456789abcdef01"), None, "SITL machine id");
+    }
+
+    #[test]
+    fn a_board_name_without_underscore_is_read() {
+        assert_eq!(
+            boot_identity("DAKEFPVH743 00480039 30345115 32373837"),
+            Some(("DAKEFPVH743".into(), "004800393034511532373837".into()))
+        );
+        assert_eq!(boot_identity("CubeOrange_plus 003A0028 3132510D 39353232").map(|(n, _)| n), Some("CubeOrange_plus".into()));
+    }
+
+    #[test]
+    fn other_banner_lines_are_not_a_board() {
+        for line in ["ArduCopter V4.8.0-dev (113108bd)", "ChibiOS: 9aebaf4a", "RCOut: DS300:1-4 PWM:5-13", "IMU0: LSM6DSK320X fast sampling enabled 8.0kHz", "Frame: QUAD/X_REV", "PreArm: Battery 1 below minimum"] {
+            assert_eq!(boot_identity(line), None, "{line}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod log_dir_tests {
+    use super::*;
+
+    #[test]
+    fn sitl_logs_go_by_vehicle_type_apart_from_boards() {
+        let mut st = LinkState::new();
+        st.sample.boot_uid = "004B00393034511537393339".into();
+        assert_eq!(log_dir_key(&st), "004B00393034511537393339");
+        st.sample.params.insert("SIM_SPEEDUP".into(), 1.0);
+        assert_eq!(log_dir_key(&st), "sitl");
+        st.sample.frame = "plane".into();
+        assert_eq!(log_dir_key(&st), "sitl-plane");
+    }
+
+    #[test]
+    fn a_board_without_its_boot_line_is_its_system_id() {
+        let st = LinkState::new();
+        assert_eq!(log_dir_key(&st), "system-1");
     }
 }

@@ -375,34 +375,9 @@ fn connected_board(sample: &Sample, conn: &Connection) -> Option<Controller> {
     }
     let version = sample.telemetry.get("AUTOPILOT_VERSION");
     let data = version.and_then(|value| value.get("data"));
-    let board_line = sample
-        .events
-        .iter()
-        .filter_map(|event| event.get("data")?.get("text")?.as_str())
-        .find(|text| {
-            text.split_whitespace()
-                .next()
-                .is_some_and(|name| name.contains('_') && name.len() <= 64)
-        });
-    let board_name = (!sample.board_name.is_empty())
-        .then(|| sample.board_name.clone())
-        .or_else(|| board_line.map(|text| text.split_whitespace().next().unwrap_or("").to_owned()));
-    let boot_uid = (!sample.boot_uid.is_empty())
-        .then(|| sample.boot_uid.clone())
-        .or_else(|| {
-            board_line.and_then(|text| {
-                let uid = text
-                    .split_whitespace()
-                    .skip(1)
-                    .filter(|part| {
-                        part.len() >= 4
-                            && part.len() <= 16
-                            && part.bytes().all(|byte| byte.is_ascii_hexdigit())
-                    })
-                    .collect::<String>();
-                (uid.len() >= 8).then_some(uid)
-            })
-        });
+    // The link reads both from the boot banner (and asks for it on connect).
+    let board_name = (!sample.board_name.is_empty()).then(|| sample.board_name.clone());
+    let boot_uid = (!sample.boot_uid.is_empty()).then(|| sample.boot_uid.clone());
     let board_id = data.and_then(|value| value.get("board_version")).and_then(Value::as_u64)
         .map(|value| (value >> 16) as i64)
         .filter(|value| *value > 0)
@@ -502,6 +477,79 @@ fn stored_profile(conn: &Connection, key: &str) -> Value {
     conn.query_row("SELECT profile FROM controllers WHERE controller_key=?1", [key], |row| row.get::<_, String>(0))
         .map(|text| profile_value(&text))
         .unwrap_or(Value::Null)
+}
+
+/// The boards this computer has seen with their MCU UID, newest first: note, profile, and what
+/// is kept for each (saved parameters, logs on this computer, assistant chats). `linked` is the
+/// UID of the board on the link now, or "".
+pub fn boards(linked: &str) -> Result<Value, String> {
+    let conn = open()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT controller_key, board_id, vehicle_id, comment, profile, first_seen, last_seen FROM controllers
+             WHERE uid IS NOT NULL AND uid != '' AND controller_key = uid ORDER BY last_seen DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<(String, i64, String, String, String, i64, i64)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)))
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .collect();
+    let logs_root = data_dir().join("logs");
+    let mut out = Vec::new();
+    for (key, board_id, vehicle, comment, profile, first_seen, last_seen) in rows {
+        let (board_name, params, params_at) = conn
+            .query_row(
+                "SELECT board_name, count, saved_at FROM param_cache_meta WHERE vehicle_key=?1",
+                [&key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?)),
+            )
+            .unwrap_or_default();
+        let chats: i64 = conn
+            .query_row("SELECT count(*) FROM ai_chat WHERE vehicle_key=?1", [&key], |row| row.get(0))
+            .unwrap_or(0);
+        let logs = fs::read_dir(logs_root.join(&key))
+            .map(|dir| dir.flatten().filter(|f| f.path().extension().is_some_and(|e| e == "bin")).count())
+            .unwrap_or(0);
+        out.push(json!({
+            "key": key,
+            "board_id": board_id,
+            "board_name": board_name,
+            "vehicle": vehicle,
+            "comment": comment,
+            "profile": profile_value(&profile),
+            "first_seen": first_seen,
+            "last_seen": last_seen,
+            "linked": !linked.is_empty() && key == linked,
+            "params": params,
+            "params_at": params_at,
+            "logs": logs,
+            "chats": chats,
+        }));
+    }
+    Ok(json!({ "boards": out }))
+}
+
+/// The assistant chats kept for one board, newest first.
+pub fn board_chats(key: &str) -> Result<Value, String> {
+    let conn = open()?;
+    let mut stmt = conn
+        .prepare("SELECT id, title, updated_at FROM ai_chat WHERE vehicle_key=?1 ORDER BY updated_at DESC LIMIT 200")
+        .map_err(|e| e.to_string())?;
+    let chats: Vec<Value> = stmt
+        .query_map([key], |row| Ok(json!({ "id": row.get::<_, String>(0)?, "title": row.get::<_, String>(1)?, "updated_at": row.get::<_, i64>(2)? })))
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .collect();
+    Ok(json!({ "key": key, "chats": chats }))
+}
+
+/// The parameters saved for one board, with when they were saved.
+pub fn board_params(key: &str) -> Result<Value, String> {
+    Ok(match load_cache_key(key)? {
+        Some(cache) => json!({ "key": key, "saved_at": cache.saved_at, "frame": cache.frame, "board_name": cache.board_name, "params": cache.params }),
+        None => json!({ "key": key, "saved_at": 0, "params": {} }),
+    })
 }
 
 /// The profile for the linked vehicle, next to its note: (controller_key, profile).
@@ -787,8 +835,9 @@ mod tests {
         let mut s = Sample::empty();
         s.ok = true;
         s.frame = "copter".into();
-        s.events
-            .push(json!({"data":{"text":"JHEM_JHEF405 002F0035 4D535012 20303932"}}));
+        let (name, uid) = crate::link::boot_identity("JHEM_JHEF405 002F0035 4D535012 20303932").unwrap();
+        s.board_name = name;
+        s.boot_uid = uid;
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE firmware_artifacts (board_name TEXT, board_id INTEGER, updated_at INTEGER);") .unwrap();
         conn.execute(
