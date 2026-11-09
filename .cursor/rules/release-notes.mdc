@@ -18,7 +18,11 @@ Use this shape:
 - **<feature>**  - <description>
 - **<feature>**  - <description>
 
+[Website](https://arduloops.web.app/) · [GitHub](https://github.com/ArduLoops) · [Telegram](https://t.me/ArduLoops) · [YouTube](https://www.youtube.com/@ArduLoops)
+
 Questions, feedback, and suggestions: [open an issue](https://github.com/ArduLoops/ArduLoops/issues/new).
 ```
+
+The links line is the same in every release. GitHub links the organisation, not one repository.
 
 The summary is one or two short sentences. Each bullet is one feature. The description uses ASD-STE100: short sentences, one idea each, simple verbs, no marketing, no extra detail.
