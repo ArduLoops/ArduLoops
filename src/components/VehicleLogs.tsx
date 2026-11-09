@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { useT } from "../i18n/i18n";
 import { openAssistant } from "../lib/assistantAsk";
 import { pokeCloud, resumeUploads, uploadLog, useCloudSync, useCloudUploads } from "../lib/cloudSync";
+import { fetchBoardSync, setBoardSync, type BoardSync } from "../lib/boards";
+import { BoardSyncSection } from "./BoardCloud";
 import { AUTO_STARTED, autoDownloadOn, cancelDownload, enqueueDownloads, setAutoDownload, useAutoDownload, useLogQueue } from "../lib/logQueue";
 import { APP_HTTP } from "../mav/link";
 import { getLatest } from "../mav/store";
@@ -1136,6 +1138,15 @@ function CloudDialog({ cloud, onClose, onMode }: { cloud: CloudState; onClose: (
   const used = cloud.used ?? 0;
   const limit = cloud.limit ?? 0;
   const pct = limit ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const [boards, setBoards] = useState<BoardSync | null>(null);
+  const [boardsBusy, setBoardsBusy] = useState(false);
+  useEffect(() => {
+    void fetchBoardSync().then(setBoards).catch(() => setBoards(null));
+  }, []);
+  const toggleBoards = (on: boolean) => {
+    setBoardsBusy(true);
+    void setBoardSync(on).then(setBoards).catch(() => {}).finally(() => setBoardsBusy(false));
+  };
   return (
     <LogDialog title={t("Cloud")} onClose={onClose} foot={<><span className="log-grow" /><button type="button" className="log-act ghost" onClick={onClose}>{t("Close")}</button></>}>
       {!cloud.signed_in ? (
@@ -1153,6 +1164,7 @@ function CloudDialog({ cloud, onClose, onMode }: { cloud: CloudState; onClose: (
           <div className="log-quota"><div><span>{t("{used} of {limit}", { used: mbLabel(used), limit: mbLabel(limit) })}</span><span className="log-dim">{pct}%</span></div><i className={pct >= 95 ? "amber" : ""}><b style={{ width: `${pct}%` }} /></i></div>
           <p className="log-dim">{t("Files are compressed; the limit counts stored bytes. Over the limit uploads pause and nothing is deleted.")}</p>
           {cloud.error ? <p className="log-bad">{t(cloud.error)}</p> : null}
+          <BoardSyncSection sync={boards} busy={boardsBusy} onToggle={toggleBoards} />
         </>
       )}
       <div className="log-sect">{t("Privacy")}</div>

@@ -244,8 +244,8 @@ pub fn set_controller_comment(key: &str, comment: &str) -> Result<Value, String>
     let comment = user_comment(comment)?;
     let changed = conn
         .execute(
-            "UPDATE controllers SET comment=?1 WHERE controller_key=?2",
-            params![comment, key],
+            "UPDATE controllers SET comment=?1, comment_at=?3 WHERE controller_key=?2",
+            params![comment, key, now()],
         )
         .map_err(|e| e.to_string())?;
     if changed == 0 {
@@ -625,17 +625,205 @@ pub fn set_controller_profile(key: &str, profile: &Value, comment: Option<&str>)
     let comment = comment.map(user_comment).transpose()?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let changed = tx
-        .execute("UPDATE controllers SET profile=?1 WHERE controller_key=?2", params![profile.to_string(), key])
+        .execute("UPDATE controllers SET profile=?1, profile_at=?3 WHERE controller_key=?2", params![profile.to_string(), key, now()])
         .map_err(|e| e.to_string())?;
     if changed == 0 {
         return Err("Controller is not in the local catalog".into());
     }
     if let Some(comment) = &comment {
-        tx.execute("UPDATE controllers SET comment=?1 WHERE controller_key=?2", params![comment, key])
+        tx.execute("UPDATE controllers SET comment=?1, comment_at=?3 WHERE controller_key=?2", params![comment, key, now()])
             .map_err(|e| e.to_string())?;
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(json!({"key": key, "profile": profile, "comment": comment}))
+}
+
+// ---------- board sync (board_sync.rs) ----------
+
+/// Local boards as sync compares them: identity, the note and the profile with their edit times,
+/// and the saved parameter set's time and size. Only boards known by their hardware id.
+pub fn board_sync_rows() -> Result<Vec<Value>, String> {
+    let conn = open()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT c.controller_key, c.board_id, c.vehicle_id, c.comment, c.comment_at, c.profile, c.profile_at,
+                    c.first_seen, c.last_seen, COALESCE(m.board_name, ''), COALESCE(m.saved_at, 0), COALESCE(m.count, 0), COALESCE(m.frame, '')
+             FROM controllers c LEFT JOIN param_cache_meta m ON m.vehicle_key = c.controller_key
+             WHERE c.uid IS NOT NULL AND c.uid != '' AND c.controller_key = c.uid",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(json!({
+                "key": row.get::<_, String>(0)?,
+                "board_id": row.get::<_, i64>(1)?,
+                "vehicle": row.get::<_, String>(2)?,
+                "comment": row.get::<_, String>(3)?,
+                "comment_at": row.get::<_, i64>(4)?,
+                "profile": profile_value(&row.get::<_, String>(5)?),
+                "profile_at": row.get::<_, i64>(6)?,
+                "first_seen": row.get::<_, i64>(7)?,
+                "last_seen": row.get::<_, i64>(8)?,
+                "board_name": row.get::<_, String>(9)?,
+                "params_at": row.get::<_, i64>(10)?,
+                "params_count": row.get::<_, i64>(11)?,
+                "params_frame": row.get::<_, String>(12)?,
+            }))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.flatten().collect())
+}
+
+/// Applies a note and a profile from the account to a board known here, each only when it is newer
+/// than the one here (last writer wins, as for log notes). Returns whether anything changed.
+pub fn merge_board_note(key: &str, comment: &str, comment_at: i64, profile: &Value, profile_at: i64) -> Result<bool, String> {
+    let conn = open()?;
+    let mut changed = conn
+        .execute(
+            "UPDATE controllers SET comment=?1, comment_at=?2 WHERE controller_key=?3 AND comment_at < ?2",
+            params![user_comment(comment)?, comment_at, key],
+        )
+        .map_err(|e| e.to_string())?;
+    let profile = if profile.is_object() { clean_profile(profile)?.to_string() } else { String::new() };
+    changed += conn
+        .execute(
+            "UPDATE controllers SET profile=?1, profile_at=?2 WHERE controller_key=?3 AND profile_at < ?2",
+            params![profile, profile_at, key],
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(changed > 0)
+}
+
+/// The saved parameter set of a board here as a JSON object, with when it was saved and its frame.
+pub fn local_board_params(key: &str) -> Result<Option<(serde_json::Map<String, Value>, i64, String)>, String> {
+    Ok(load_cache_key(key)?.map(|cache| {
+        let map = cache.params.into_iter().map(|(name, value)| (name, json!(value))).collect();
+        (map, cache.saved_at, cache.frame)
+    }))
+}
+
+const CLOUD_BOARD_COLUMNS: &str = "key, board_id, board_name, vehicle, first_seen, last_seen, comment, comment_at, profile, profile_at,
+    params_at, params_count, params_frame, deleted_at, updated_at";
+
+fn cloud_board_row(row: &rusqlite::Row) -> rusqlite::Result<Value> {
+    Ok(json!({
+        "key": row.get::<_, String>(0)?,
+        "board_id": row.get::<_, i64>(1)?,
+        "board_name": row.get::<_, String>(2)?,
+        "vehicle": row.get::<_, String>(3)?,
+        "first_seen": row.get::<_, i64>(4)?,
+        "last_seen": row.get::<_, i64>(5)?,
+        "comment": row.get::<_, String>(6)?,
+        "comment_at": row.get::<_, i64>(7)?,
+        "profile": profile_value(&row.get::<_, String>(8)?),
+        "profile_at": row.get::<_, i64>(9)?,
+        "params_at": row.get::<_, i64>(10)?,
+        "params_count": row.get::<_, i64>(11)?,
+        "params_frame": row.get::<_, String>(12)?,
+        "deleted_at": row.get::<_, i64>(13)?,
+        "updated_at": row.get::<_, i64>(14)?,
+    }))
+}
+
+fn upsert_cloud_board(conn: &Connection, row: &Value) -> Result<(), String> {
+    let key = row["key"].as_str().unwrap_or("");
+    if key.is_empty() {
+        return Ok(());
+    }
+    let profile = if row["profile"].is_object() { row["profile"].to_string() } else { String::new() };
+    let int = |name: &str| row[name].as_i64().unwrap_or(0);
+    let text = |name: &str| row[name].as_str().unwrap_or("").to_string();
+    // A snapshot fetched earlier stays while the account's snapshot is the same one.
+    conn.execute(
+        "INSERT INTO cloud_boards (key, board_id, board_name, vehicle, first_seen, last_seen, comment, comment_at, profile, profile_at,
+            params_at, params_count, params_frame, deleted_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+         ON CONFLICT(key) DO UPDATE SET board_id=excluded.board_id, board_name=excluded.board_name, vehicle=excluded.vehicle,
+           first_seen=excluded.first_seen, last_seen=excluded.last_seen, comment=excluded.comment, comment_at=excluded.comment_at,
+           profile=excluded.profile, profile_at=excluded.profile_at,
+           params = CASE WHEN cloud_boards.params_at = excluded.params_at THEN cloud_boards.params ELSE '' END,
+           params_fetched_at = CASE WHEN cloud_boards.params_at = excluded.params_at THEN cloud_boards.params_fetched_at ELSE 0 END,
+           params_at=excluded.params_at, params_count=excluded.params_count, params_frame=excluded.params_frame,
+           deleted_at=excluded.deleted_at, updated_at=excluded.updated_at",
+        params![key, int("board_id"), text("board_name"), text("vehicle"), int("first_seen"), int("last_seen"), text("comment"),
+            int("comment_at"), profile, int("profile_at"), int("params_at"), int("params_count"), text("params_frame"),
+            int("deleted_at"), int("updated_at")],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Replaces the copy of the account's board list. Rows the account no longer lists go.
+pub fn store_cloud_boards(rows: &[Value]) -> Result<(), String> {
+    let mut conn = open()?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let keys: Vec<&str> = rows.iter().filter_map(|row| row["key"].as_str()).collect();
+    let existing: Vec<String> = {
+        let mut stmt = tx.prepare("SELECT key FROM cloud_boards").map_err(|e| e.to_string())?;
+        let found = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(|e| e.to_string())?.flatten().collect();
+        found
+    };
+    for key in existing.iter().filter(|key| !keys.contains(&key.as_str())) {
+        tx.execute("DELETE FROM cloud_boards WHERE key=?1", [key]).map_err(|e| e.to_string())?;
+    }
+    for row in rows {
+        upsert_cloud_board(&tx, row)?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Updates one row of the copy, after a push or a removal.
+pub fn store_cloud_board(row: &Value) -> Result<(), String> {
+    upsert_cloud_board(&open()?, row)
+}
+
+/// Keeps the account's parameter snapshot for a board, for showing it offline.
+pub fn store_cloud_params(key: &str, params: &Value, params_at: i64) -> Result<(), String> {
+    let conn = open()?;
+    conn.execute(
+        "UPDATE cloud_boards SET params=?1, params_fetched_at=?2 WHERE key=?3 AND params_at=?4",
+        params![params.to_string(), now(), key, params_at],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The copy of the account's boards, removed ones included (`deleted_at` > 0).
+pub fn cloud_boards() -> Result<Vec<Value>, String> {
+    let conn = open()?;
+    let mut stmt = conn
+        .prepare(&format!("SELECT {CLOUD_BOARD_COLUMNS} FROM cloud_boards ORDER BY last_seen DESC"))
+        .map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], cloud_board_row).map_err(|e| e.to_string())?;
+    Ok(rows.flatten().collect())
+}
+
+/// The account's snapshot for one board as kept here: (params, params_at, frame). None when it was
+/// never fetched or the account's snapshot changed since.
+pub fn cloud_board_params(key: &str) -> Result<Option<(Value, i64, String)>, String> {
+    let conn = open()?;
+    let found = conn.query_row(
+        "SELECT params, params_at, params_frame FROM cloud_boards WHERE key=?1 AND deleted_at = 0",
+        [key],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?)),
+    );
+    let Ok((text, at, frame)) = found else {
+        return Ok(None);
+    };
+    Ok(serde_json::from_str::<Value>(&text).ok().filter(Value::is_object).map(|params| (params, at, frame)))
+}
+
+/// Forgets the copy of the account's boards: on sign-out, another account, or sync turned off.
+pub fn clear_cloud_boards() -> Result<(), String> {
+    open()?.execute("DELETE FROM cloud_boards", []).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Logs stored here for a board.
+pub fn board_log_count(key: &str) -> usize {
+    fs::read_dir(data_dir().join("logs").join(key))
+        .map(|dir| dir.flatten().filter(|f| f.path().extension().is_some_and(|e| e == "bin")).count())
+        .unwrap_or(0)
 }
 
 pub fn database_path() -> String {
@@ -671,6 +859,12 @@ pub(crate) fn data_dir() -> PathBuf {
     if let Some(path) = APP_DATA_DIR.get() {
         let _ = fs::create_dir_all(path);
         return path.clone();
+    }
+    // A second headless bridge (a second "device" for trying sync) keeps its own catalog and session.
+    if let Some(path) = std::env::var_os("ARDULOOPS_DATA_DIR").filter(|p| !p.is_empty()) {
+        let path = PathBuf::from(path);
+        let _ = fs::create_dir_all(&path);
+        return path;
     }
     let root = if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA")
@@ -756,7 +950,10 @@ pub fn remember_params(
         params![key, frame, board_name, boot_uid, at, count],
     )
     .map_err(|e| e.to_string())?;
-    conn.commit().map_err(|e| e.to_string())
+    conn.commit().map_err(|e| e.to_string())?;
+    // The account gets the new snapshot once the download (or a run of edits) settles.
+    crate::board_sync::poke(20);
+    Ok(())
 }
 
 /// One parameter changed after the full set was saved.

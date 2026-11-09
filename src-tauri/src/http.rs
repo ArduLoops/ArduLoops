@@ -11,6 +11,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const HTTP_ADDR: &str = "127.0.0.1:8767";
 
+/// Where the headless bridge listens. `ARDULOOPS_BRIDGE_ADDR` (a 127.0.0.1 address) runs a second
+/// bridge next to the app, with its own `ARDULOOPS_DATA_DIR`, to try sync as a second device.
+pub fn bridge_addr() -> String {
+    std::env::var("ARDULOOPS_BRIDGE_ADDR").ok().filter(|addr| addr.starts_with("127.0.0.1:")).unwrap_or_else(|| HTTP_ADDR.into())
+}
+
 const CORS: &str = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type, authorization, cache-control\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Private-Network: true\r\n";
 
 pub fn serve(addr: &str, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) {
@@ -356,6 +362,30 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         return Ok(());
     }
 
+    // Board sync with the account (board_sync.rs). Nothing here talks to a vehicle.
+    if path == "/boards/cloud" || path.starts_with("/boards/cloud/") {
+        let body = if method == "POST" { read_json_body(&mut reader, &headers, 65_536)? } else { serde_json::Value::Null };
+        let mut socket = reader.into_inner();
+        let result: Result<serde_json::Value, String> = match (method.as_str(), path.as_str()) {
+            ("GET", "/boards/cloud") => Ok(crate::board_sync::state()),
+            ("POST", "/boards/cloud/settings") => match body["enabled"].as_bool() {
+                Some(on) => crate::board_sync::set_enabled(on),
+                None => Err("enabled must be true or false".into()),
+            },
+            // Offline or signed out is not a failure here: the state carries the reason.
+            ("POST", "/boards/cloud/sync") => {
+                let _ = crate::board_sync::sync();
+                Ok(crate::board_sync::state())
+            }
+            ("POST", "/boards/cloud/remove") => crate::board_sync::remove(body["key"].as_str().unwrap_or("")),
+            _ => Err("not found".into()),
+        };
+        return match result {
+            Ok(value) => reply(&mut socket, 200, "application/json", &serde_json::to_vec(&value)?),
+            Err(error) => reply(&mut socket, 400, "application/json", &serde_json::to_vec(&serde_json::json!({ "error": error }))?),
+        };
+    }
+
     if path.starts_with("/logs/") && matches!(path.as_str(), "/logs/local" | "/logs/scan" | "/logs/note" | "/logs/delete" | "/logs/share" | "/logs/reveal-shared")
         || path == "/logs/cloud" || path.starts_with("/logs/cloud/")
     {
@@ -674,7 +704,7 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
             .get("controller_key")
             .and_then(serde_json::Value::as_str)
         {
-            Some(key) => crate::db::set_controller_comment(key, comment),
+            Some(key) => crate::db::set_controller_comment(key, comment).inspect(|_| crate::board_sync::poke(2)),
             None => match args.get("artifact_id").and_then(serde_json::Value::as_str) {
                 Some(id) => crate::db::set_firmware_comment(id, comment),
                 None => Err("controller_key or artifact_id is required".into()),
@@ -713,7 +743,8 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
                 key,
                 args.get("profile").unwrap_or(&serde_json::Value::Null),
                 args.get("comment").and_then(serde_json::Value::as_str),
-            ),
+            )
+            .inspect(|_| crate::board_sync::poke(2)),
             None => Err("controller_key is required".into()),
         };
         let mut socket = reader.into_inner();
@@ -850,7 +881,7 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
     }
     if method == "GET" && path == "/boards" {
         let linked = latest.lock().map(|g| if g.ok { g.boot_uid.clone() } else { String::new() }).unwrap_or_default();
-        let body = crate::db::boards(&linked).unwrap_or_else(|error| serde_json::json!({ "boards": [], "error": error }));
+        let body = crate::board_sync::boards(&linked).unwrap_or_else(|error| serde_json::json!({ "boards": [], "error": error }));
         return reply(&mut socket, 200, "application/json", &serde_json::to_vec(&body)?);
     }
     if method == "GET" && path == "/boards/chats" {
@@ -860,7 +891,7 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
     }
     if method == "GET" && path == "/boards/params" {
         let key = query.get("key").cloned().unwrap_or_default();
-        let body = crate::db::board_params(&key).unwrap_or_else(|error| serde_json::json!({ "error": error }));
+        let body = crate::board_sync::board_params(&key).unwrap_or_else(|error| serde_json::json!({ "error": error }));
         return reply(&mut socket, 200, "application/json", &serde_json::to_vec(&body)?);
     }
     if method == "GET" && path == "/logs" {

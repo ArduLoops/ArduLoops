@@ -192,9 +192,14 @@ function ShellPicker({
   const others = boards.filter((row) => row.key !== linkedKey);
   const openRow = board ? boards.find((row) => row.key === board) : undefined;
   const label = board ? (openRow ? name(openRow) : t("Board")) : value === "home" ? t("Home") : t(value);
-  const sub = (row: BoardRow) =>
-    [row.board_name, row.vehicle, row.last_seen ? BOARD_WHEN.format(new Date(row.last_seen * 1000)) : "",
-      t("{n} logs", { n: row.logs }), t("{n} chats", { n: row.chats })].filter(Boolean).join(" · ");
+  // A board from the account that was never linked here says so instead of counting chats it cannot have.
+  const sub = (row: BoardRow) => {
+    const seen = row.last_seen_anywhere ?? row.last_seen;
+    const parts = [row.board_name, row.vehicle, seen ? BOARD_WHEN.format(new Date(seen * 1000)) : ""];
+    return row.source === "cloud"
+      ? [...parts, row.logs ? t("{n} logs", { n: row.logs }) : ""].filter(Boolean).join(" · ")
+      : [...parts, t("{n} logs", { n: row.logs }), t("{n} chats", { n: row.chats })].filter(Boolean).join(" · ");
+  };
   return (
     <details
       ref={box}
@@ -224,9 +229,10 @@ function ShellPicker({
         {others.length ? <i className="hdr-shell-sep">{t("Saved boards")}</i> : null}
         {others.map((row) => (
           <button key={row.key} type="button" role="option" aria-selected={board === row.key} className={board === row.key ? "on board-opt" : "board-opt"}
-            onClick={() => { onBoard(row.key); close(); }}>
+            onClick={() => { onBoard(row.key); close(); }}
+            title={row.source === "cloud" ? t("From your account. It was never linked on this device, so it is read only here.") : undefined}>
             <b>{name(row)}</b>
-            <small>{sub(row)}</small>
+            <small>{row.source === "cloud" ? <><i>{t("From the cloud")}</i> · </> : null}{sub(row)}</small>
           </button>
         ))}
         <i className="hdr-shell-sep">{t("Views")}</i>

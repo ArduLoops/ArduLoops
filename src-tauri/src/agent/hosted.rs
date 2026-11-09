@@ -261,6 +261,11 @@ pub fn signed_in() -> bool {
     load_session().is_some()
 }
 
+/// The signed-in account, from the session file (no request). Board sync keeps one account's copy.
+pub fn session_email() -> Option<String> {
+    load_session().map(|session| session.email)
+}
+
 fn api_post(path: &str, body: &Value) -> Result<Value, String> {
     let token = session_id_token()?;
     let url = format!("{}{path}", api_base());

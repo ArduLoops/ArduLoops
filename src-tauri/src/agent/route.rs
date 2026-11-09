@@ -69,6 +69,7 @@ pub fn route(
         }
         ("POST", "/ai/logout") => {
             logout_session();
+            crate::board_sync::forget_account();
             Ok(status(&c))
         }
         ("POST", "/ai/checkout") => {

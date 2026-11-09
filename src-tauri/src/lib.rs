@@ -3,6 +3,7 @@
 mod agent;
 mod app;
 mod board_doc;
+mod board_sync;
 mod cli;
 mod cloud;
 mod db;
@@ -33,7 +34,6 @@ pub fn wants_mcp(args: &[String]) -> bool {
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 
-use crate::http::HTTP_ADDR;
 use crate::link::{Cmd, OnSample, Sample};
 
 pub fn run_cli(args: &[String]) -> i32 {
@@ -59,15 +59,16 @@ fn spawn_backend(rx: std::sync::mpsc::Receiver<Cmd>, tx_http: Sender<Cmd>, on_sa
     let sitl = sitl::SitlCtl::new();
     let latest_http = latest.clone();
     let sitl_loop = sitl.clone();
-    std::thread::spawn(move || http::serve(HTTP_ADDR, latest_http, tx_http));
+    std::thread::spawn(move || http::serve(&http::bridge_addr(), latest_http, tx_http));
     std::thread::spawn(move || link::run_loop(on_sample, rx, latest, url, sitl_loop));
     crate::app::kick_refresh();
+    crate::board_sync::start();
 }
 
 pub fn run_bridge() {
     agent::note_stopped_turns();
     let (tx, rx) = mpsc::channel::<Cmd>();
-    println!("ArduLoops  http://{HTTP_ADDR}  (headless MAVLink for the browser UI)");
+    println!("ArduLoops  http://{}  (headless MAVLink for the browser UI)", http::bridge_addr());
     println!("UI         http://127.0.0.1:5173");
     spawn_backend(rx, tx, Arc::new(|_: &Sample| {}));
     loop {

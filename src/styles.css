@@ -1808,7 +1808,11 @@ button.vb-title.ghost:hover { color: var(--cyan); }
 .vb-state.off { background: #1d242d; color: var(--dim); }
 /* A board opened from the database (BoardView). */
 main.board-main { grid-template-columns: minmax(0, 1fr); }
-.board-view { display: flex; flex-direction: column; min-height: 0; }
+.board-view { position: relative; display: flex; flex-direction: column; min-height: 0; }
+.bv-cloud { margin: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; text-align: left; text-decoration: underline dotted #4a5868; text-underline-offset: 3px; cursor: pointer; }
+.bv-cloud:hover { color: var(--cyan); }
+.bv-cloud.pending, .bv-cloud.off, .bv-cloud.signed_out, .bv-cloud.removed { color: var(--dim); }
+.hdr-shell-menu button.board-opt small i { color: var(--cyan); font-style: normal; }
 .board-view .vb-in { align-items: flex-start; }
 .bv-facts { display: grid; grid-template-columns: repeat(2, minmax(0, auto)); gap: 4px 18px; margin: 0 0 0 auto; font-size: 12px; }
 .bv-facts div { display: flex; flex-direction: column; }

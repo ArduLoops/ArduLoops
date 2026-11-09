@@ -3,8 +3,10 @@
  * Centralizes local bridge ports, cloud origins, and OAuth callback schemes.
  */
 
-/** Local MAVLink HTTP bridge port */
-export const APP_HTTP_PORT = 8767;
+/** Local MAVLink HTTP bridge port. VITE_BRIDGE_PORT points a dev build at a second bridge (a second "device"). */
+export const APP_HTTP_PORT = Number(
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_BRIDGE_PORT) || 8767,
+);
 
 /** Local MAVLink HTTP bridge (browser and desktop) */
 export const APP_HTTP = `http://127.0.0.1:${APP_HTTP_PORT}`;
