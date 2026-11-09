@@ -336,7 +336,7 @@ mod link_wait_tests {
         assert!(!SKILL_ROOT.contains("rng_m"));
         assert!(!SKILL_ROOT.contains("sonarrange"));
         assert!(SKILL_ROOT.contains("live_buffer"));
-        assert!(SKILL_ROOT.contains("https://github.com/alex-pokydin/ArduLoops/issues"));
+        assert!(SKILL_ROOT.contains("https://github.com/ArduLoops/ArduLoops/issues"));
         assert!(SKILL_ROOT.contains("## This station"));
         assert!(SKILL_ROOT.contains("It is reported when the user asked for it, the request makes sense for this station, and nothing here does it."));
         assert!(SKILL_ROOT.contains("A part is a tool, a control on the screen, a drawing, or another action."));

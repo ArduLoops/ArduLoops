@@ -18,7 +18,7 @@ Use this shape:
 - **<feature>**  - <description>
 - **<feature>**  - <description>
 
-Questions, feedback, and suggestions: [open an issue](https://github.com/alex-pokydin/ArduLoops/issues/new).
+Questions, feedback, and suggestions: [open an issue](https://github.com/ArduLoops/ArduLoops/issues/new).
 ```
 
 The summary is one or two short sentences. Each bullet is one feature. The description uses ASD-STE100: short sentences, one idea each, simple verbs, no marketing, no extra detail.

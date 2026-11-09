@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 
 use crate::db::data_dir;
 
-const RELEASES_API: &str = "https://api.github.com/repos/alex-pokydin/ArduLoops/releases/latest";
-const RELEASES_PAGE: &str = "https://github.com/alex-pokydin/ArduLoops/releases/latest";
+const RELEASES_API: &str = "https://api.github.com/repos/ArduLoops/ArduLoops/releases/latest";
+const RELEASES_PAGE: &str = "https://github.com/ArduLoops/ArduLoops/releases/latest";
 const CACHE_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 
 struct Release {
@@ -245,7 +245,7 @@ mod tests {
         assert_eq!(body["newer"], false);
         let found = super::Release {
             tag: "2.3.0".into(),
-            url: "https://github.com/alex-pokydin/ArduLoops/releases/tag/2.3.0".into(),
+            url: "https://github.com/ArduLoops/ArduLoops/releases/tag/2.3.0".into(),
         };
         let next = super::report("2.2.1", Some(&found));
         assert_eq!(next["newer"], true);
