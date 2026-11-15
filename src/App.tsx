@@ -13,6 +13,8 @@ import { LabDialog, type AppRelease } from "./components/LabDialog";
 import { StudioRecorder } from "./components/StudioRecorder";
 import { SimRail } from "./components/SimRail";
 import { CopterApp } from "./copter/App";
+import { ControllerView } from "./components/ControllerView";
+import { usePhone } from "./lib/phone";
 import { useT } from "./i18n/i18n";
 import { externalPage, openExternal } from "./lib/open";
 import { addLog, setLogHandler } from "./log";
@@ -161,6 +163,7 @@ function ShellPicker({
   onPick,
   onBoard,
   onOpen,
+  linkedOpensBoard = false,
 }: {
   value: Shell;
   idle: boolean;
@@ -171,6 +174,8 @@ function ShellPicker({
   onPick: (next: Shell) => void;
   onBoard: (key: string) => void;
   onOpen: () => void;
+  /** On a phone the board on the link opens as a board (header, params, logs, chats), like a saved one. */
+  linkedOpensBoard?: boolean;
 }) {
   const t = useT();
   const box = useRef<HTMLDetailsElement>(null);
@@ -191,6 +196,7 @@ function ShellPicker({
   const linkedRow = linkedKey ? boards.find((row) => row.key === linkedKey) : undefined;
   const others = boards.filter((row) => row.key !== linkedKey);
   const openRow = board ? boards.find((row) => row.key === board) : undefined;
+  const linkedOn = linkedOpensBoard ? !!board && board === linkedKey : !board && value !== "home";
   const label = board ? (openRow ? name(openRow) : t("Board")) : value === "home" ? t("Home") : t(value);
   // A board from the account that was never linked here says so instead of counting chats it cannot have.
   const sub = (row: BoardRow) => {
@@ -219,8 +225,8 @@ function ShellPicker({
         {linkedRow ? (
           <>
             <i className="hdr-shell-sep">{t("On the link")}</i>
-            <button type="button" role="option" aria-selected={!board && value !== "home"} className={!board && value !== "home" ? "on board-opt" : "board-opt"}
-              onClick={() => { onPick(linkedRow.vehicle === "plane" ? "plane" : "copter"); close(); }}>
+            <button type="button" role="option" aria-selected={linkedOn} className={linkedOn ? "on board-opt" : "board-opt"}
+              onClick={() => { if (linkedOpensBoard) onBoard(linkedRow.key); else onPick(linkedRow.vehicle === "plane" ? "plane" : "copter"); close(); }}>
               <b>{name(linkedRow)}</b>
               <small>{sub(linkedRow)}</small>
             </button>
@@ -457,6 +463,10 @@ export function App() {
 
   // A board opened from the database becomes the live screen once it is the board on the link.
   const boardOpen = board && board !== face.uid ? board : null;
+  // On a phone the board on the link opens as its own screen (from the View menu); the flight view is one tap away.
+  const phone = usePhone();
+  const liveBoard = phone && !!board && !!face.uid && board === face.uid;
+  const away = !!boardOpen || liveBoard;
   function openBoard(key: string | null) {
     setBoard(key);
     writeBoardUrl(key);
@@ -526,12 +536,13 @@ export function App() {
                     ? t("View")
                     : t("Idle · this frame is not on the link")
               }
-              board={boardOpen}
+              board={boardOpen ?? (liveBoard ? board : null)}
               boards={boards}
               linkedKey={face.uid}
               onPick={onShell}
               onBoard={(key) => openBoard(key)}
               onOpen={refreshBoards}
+              linkedOpensBoard={phone}
             />
           </h1>
         </div>
@@ -556,6 +567,7 @@ export function App() {
             armed={face.armed}
             live={live === "home" ? null : live}
             shell={shell}
+            away={away}
             sitl={sitl}
             sourceKnown={sourceKnown}
             kind={linkKind}
@@ -569,10 +581,11 @@ export function App() {
             onLink={applyLink}
             onStop={onDisconnect}
             onShowFrame={(frame) => {
-              if (shell !== frame) onShell(frame);
+              if (shell !== frame || away) onShell(frame);
             }}
           />
-          {linked ? (
+          {/* Pause belongs to the live vehicle view. Elsewhere it shows only while paused, so the display can be resumed. */}
+          {linked && ((shell === live && !away) || paused) ? (
             <button
               type="button"
               className={paused ? "pause-btn on" : "pause-btn"}
@@ -623,6 +636,12 @@ export function App() {
         <main className="board-main">
           <BoardView boardKey={boardOpen} onClose={() => openBoard(null)} />
         </main>
+      ) : liveBoard ? (
+        <VehicleView vehicle={live === "plane" ? "plane" : "copter"}>
+          <main className="board-main">
+            <ControllerView phone />
+          </main>
+        </VehicleView>
       ) : shell === "home" ? null : plane ? (
         <VehicleView vehicle="plane">
           <PlaneApp log={log} />

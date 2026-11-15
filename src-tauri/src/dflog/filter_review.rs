@@ -129,19 +129,22 @@ pub fn filter_review_bytes(
     let axis_filter = axis.unwrap_or("all").to_ascii_lowercase();
 
     let mut incomplete = false;
-    walk(bytes, &formats, |fmt, _, values| {
-        let Some(us) = time_us(fmt, values) else { return };
-        if start_us.is_some_and(|s| us < s) || end_us.is_some_and(|e| us > e) {
-            return;
-        }
-
+    walk_only(bytes, &formats, &["PARM", "FTN1", "FTN2", "CTUN", "ESC", "FTNS", "RATE"], |fmt, _, values| {
+        // Parameters are written at the start of the log, before any interval.
         if fmt.name == "PARM" {
             if let (Some(name), Some(val)) = (field_str(fmt, values, "Name"), field_f64(fmt, values, "Value")) {
                 if name.starts_with("INS_HNTCH_") || name.starts_with("INS_HNTC2_") || name.starts_with("INS_GYRO_FILTER") {
                     parms.insert(name, val);
                 }
             }
-        } else if fmt.name == "FTN1" || fmt.name == "FTN2" {
+            return;
+        }
+        let Some(us) = time_us(fmt, values) else { return };
+        if start_us.is_some_and(|s| us < s) || end_us.is_some_and(|e| us > e) {
+            return;
+        }
+
+        if fmt.name == "FTN1" || fmt.name == "FTN2" {
             if let Some(freq) = field_f64(fmt, values, "PkAvg")
                 .or_else(|| field_f64(fmt, values, "Freq"))
                 .or_else(|| field_f64(fmt, values, "NF"))
@@ -190,7 +193,7 @@ pub fn filter_review_bytes(
 
     // If batch gyro sampling is present, run gyro_batch_fft to get exact spectral envelope
     let scan = scan_gyro(bytes);
-    let views = classify_captures(&scan.groups);
+    let views = classify_captures(&scan.groups, &scan.parms);
 
     let (sample_hz, spectrum, detected_peak_hz, _detected_snr) = if !views.is_empty() {
         let primary = &views[0];
@@ -220,8 +223,11 @@ pub fn filter_review_bytes(
         }
         (1000.0, spec, mean_freq, mean_snr)
     } else if rate_gyr.len() > 64 {
-        // Fast FFT from RATE message gyro field
-        let n = next_pow2(rate_gyr.len().min(4096));
+        // FFT of the RATE gyro column, over the largest power of two the series holds.
+        let n = {
+            let cap = rate_gyr.len().min(4096);
+            if cap.is_power_of_two() { cap } else { next_pow2(cap) / 2 }
+        };
         let mut dts: Vec<f64> = rate_gyr.windows(2).map(|w| (w[1].0.saturating_sub(w[0].0)) as f64 / 1_000_000.0).filter(|d| *d > 0.0).collect();
         dts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let dt = if dts.is_empty() { 0.0025 } else { dts[dts.len() / 2] };
@@ -246,6 +252,17 @@ pub fn filter_review_bytes(
                 best_amp = a;
                 best_hz = f;
             }
+        }
+        if best_hz <= 0.0 {
+            // RATE at a low rate cannot hold a motor line: nothing above 35 Hz is in it.
+            return json!({
+                "ok": false,
+                "error": format!(
+                    "No gyro vibration data in this log. RATE is logged at {s_rate:.0} Hz, so no frequency above {:.0} Hz is in it, and there are no gyro batches (INS_LOG_BAT_MASK, INS_LOG_BAT_OPT) or FTN1 records.",
+                    s_rate / 2.0,
+                ),
+                "sample_hz": (s_rate * 10.0).round() / 10.0,
+            });
         }
         (s_rate, spec, best_hz, best_amp)
     } else {
@@ -309,7 +326,11 @@ pub fn filter_review_bytes(
         // A narrow window: the line itself, not the broadband noise around it.
         let (amp, _) = spectrum_peak_near(&spectrum, hz, (hz * 0.04).max(resolution * 2.0));
         let level = if amp <= 0.0 || fundamental_amp <= 0.0 { -120.0 } else { 20.0 * (amp / fundamental_amp).log10() };
-        let covered = cur.enable && cur.hmncs & (1 << (n - 1)) != 0;
+        // Covered only when that harmonic of the notch sits on the line: within half its bandwidth,
+        // which grows with the harmonic as in ArduPilot.
+        let centre = base_hz * n as f64;
+        let reach = (cur.bw * n as f64 * 0.5).max(resolution * 2.0);
+        let covered = cur.enable && cur.hmncs & (1 << (n - 1)) != 0 && (centre - hz).abs() <= reach;
         harmonics.push(json!({ "n": n, "hz": (hz * 10.0).round() / 10.0, "level_db": (level * 10.0).round() / 10.0, "notched": covered }));
     }
 
@@ -328,7 +349,15 @@ pub fn filter_review_bytes(
         base.freq = detected_peak_hz.round();
         base.bw = (base.freq * 0.5).round().max(20.0);
     }
-    let rec_base = if base.mode != 0 { tracked_hz.unwrap_or(detected_peak_hz) } else { base.freq };
+    // A throttle notch that the log shows away from the motor line: FREQ is the line at hover and REF
+    // the hover throttle, so the notch sits on the line at hover and follows it with throttle.
+    let retune_ref = cur.enable && cur.mode == 1 && detected_peak_hz > 30.0 && hover_tho > 0.0
+        && tracked_hz.is_some_and(|hz| (hz - detected_peak_hz).abs() > cur.bw.max(20.0) * 0.5);
+    if retune_ref {
+        base.freq = detected_peak_hz.round();
+        base.bw = (base.freq * 0.5).round().max(20.0);
+    }
+    let rec_base = if retune_ref { detected_peak_hz } else if base.mode != 0 { tracked_hz.unwrap_or(detected_peak_hz) } else { base.freq };
     let cur_centres = notch_centres(&cur, base_hz, &motor_hz);
     let cur_left = batches.after_notches(&cur, base_hz, &motor_hz);
     let cur_noise = batches.residual(&cur_left, cur.lpf);
@@ -355,7 +384,8 @@ pub fn filter_review_bytes(
             let centres = notch_centres(&plan, rec_base, &motor_hz);
             let left = batches.after_notches(&plan, rec_base, &motor_hz);
             let mut lpf = cur.lpf;
-            let mut step = (cur.lpf / 5.0).floor() * 5.0 + 5.0;
+            // A parameter far out of range must not turn this into a search of millions of steps.
+            let mut step = ((cur.lpf / 5.0).floor() * 5.0 + 5.0).max(5.0);
             while step <= max_lpf {
                 if batches.residual(&left, step) <= cur_noise {
                     lpf = step;
@@ -379,7 +409,7 @@ pub fn filter_review_bytes(
     }
     // Keep the settings on the vehicle unless a change takes off real delay.
     let rec = match best {
-        Some((plan, delay)) if !cur.enable || delay < cur_delay - 0.2 => plan,
+        Some((plan, delay)) if !cur.enable || retune_ref || delay < cur_delay - 0.2 => plan,
         _ => base,
     };
     let rec_centres = notch_centres(&rec, rec_base, &motor_hz);
@@ -406,6 +436,9 @@ pub fn filter_review_bytes(
     put("INS_HNTCH_HMNCS", cur.hmncs as f64, rec.hmncs as f64);
     put("INS_HNTCH_OPTS", cur.opts as f64, rec.opts as f64);
     put("INS_GYRO_FILTER", cur.lpf, rec.lpf);
+    if retune_ref {
+        put("INS_HNTCH_REF", get("INS_HNTCH_REF", 0.0), (hover_tho * 100.0).round() / 100.0);
+    }
     let needs_update = !proposed.is_empty();
 
     let measured = post_view.map(|view| json!({

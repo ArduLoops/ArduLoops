@@ -52,7 +52,7 @@ export const PINNED_UPSTREAMS = {
         commit: 'bb42db8c1b',
         date: '2026-10-11',
         rustModule: 'src-tauri/src/dflog/pid_review.rs',
-        description: 'Rate PID cross-correlation lag, Phase/Gain Margins, and step response',
+        description: 'Closed-loop transfer estimate of the rate loops: step response, Bode, and margins',
       },
       {
         name: 'HardwareReport',

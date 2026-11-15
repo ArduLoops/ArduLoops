@@ -18,7 +18,7 @@ The sessions below all use this same set. A figure in the answer is a figure one
 
 It reads parameters on the link, or the last set this app stored when the link is quiet. It can open the official description, range, and units for a name, and it can write a new value. That write is the card above.
 
-It lists the DataFlash logs still on the board and downloads one. For a file already on this computer it can say what the flight contained, how a loop tracked, and draw that series under the reply. A spectrum, or a spectrogram, is drawn only when that picture is part of the answer. Clearing the log chip waits on a card.
+It lists the DataFlash logs still on the board and downloads one. For a file already on this computer it can say what the flight contained, how a loop tracked, and draw that series under the reply. A spectrum, or a spectrogram, is drawn only when that picture is part of the answer. So is the step response, or the frequency response, of the rate loops. Clearing the log chip waits on a card.
 
 It can draw the live link as well. The chart uses MAVLink fields that have already arrived, including a named value a Lua script is publishing, and it can read about the last minute of those fields.
 

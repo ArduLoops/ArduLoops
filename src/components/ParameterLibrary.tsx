@@ -53,6 +53,16 @@ export const ParameterLibrary = memo(function ParameterLibrary({ focus }: { focu
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDetailsElement>(null);
+  // The phone's ⋯ menu closes on a tap outside it.
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      const box = moreRef.current;
+      if (box?.open && !box.contains(event.target as Node)) box.removeAttribute("open");
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, []);
   const blocked = useRef(0);
   const [limit, setLimit] = useState(24);
   const [listH, setListH] = useState(0);
@@ -240,11 +250,20 @@ export const ParameterLibrary = memo(function ParameterLibrary({ focus }: { focu
               <input className="work-find" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tr("Search parameters")} autoComplete="off" spellCheck={false} />
             </label>
             <span className="work-count" title={tr("Parameters received: {count}", { count: entries.length })}>{visible.length}</span>
-            <button type="button" className="firmware-refresh" onClick={refresh} disabled={!link.ok || busy}>{tr("Refresh")}</button>
+            <button type="button" className={focus ? "firmware-refresh" : "firmware-refresh param-act"} onClick={refresh} disabled={!link.ok || busy}>{tr("Refresh")}</button>
             {focus ? null : (
               <>
-                <button type="button" className="firmware-refresh" onClick={backup} disabled={!link.ok || busy}>{tr("Full backup")}</button>
-                <button type="button" className="firmware-refresh" onClick={() => fileRef.current?.click()} disabled={!link.ok || busy}>{busy ? tr("Restoring…") : tr("Full restore")}</button>
+                <button type="button" className="firmware-refresh param-act" onClick={backup} disabled={!link.ok || busy}>{tr("Full backup")}</button>
+                <button type="button" className="firmware-refresh param-act" onClick={() => fileRef.current?.click()} disabled={!link.ok || busy}>{busy ? tr("Restoring…") : tr("Full restore")}</button>
+                {/* On a phone the three actions above fold into this menu, so the bar stays one line. */}
+                <details className="param-more" ref={moreRef}>
+                  <summary aria-label={tr("More actions")}>⋯</summary>
+                  <div className="log-menu" onClick={() => moreRef.current?.removeAttribute("open")}>
+                    <button type="button" onClick={refresh} disabled={!link.ok || busy}>{tr("Refresh")}</button>
+                    <button type="button" onClick={backup} disabled={!link.ok || busy}>{tr("Full backup")}</button>
+                    <button type="button" onClick={() => fileRef.current?.click()} disabled={!link.ok || busy}>{busy ? tr("Restoring…") : tr("Full restore")}</button>
+                  </div>
+                </details>
                 <input
                   ref={fileRef}
                   className="sr-only"

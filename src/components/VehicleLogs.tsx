@@ -1,20 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import { openAssistant } from "../lib/assistantAsk";
+import { argsText, askAboutFindings, FindingsWindow, FLAG_LABEL, HOT, spanText, toolLabel, type Finding, type Findings, type Flag } from "./LogFindings";
 import { pokeCloud, resumeUploads, uploadLog, useCloudSync, useCloudUploads } from "../lib/cloudSync";
 import { fetchBoardSync, setBoardSync, type BoardSync } from "../lib/boards";
 import { BoardSyncSection } from "./BoardCloud";
 import { AUTO_STARTED, autoDownloadOn, cancelDownload, enqueueDownloads, setAutoDownload, useAutoDownload, useLogQueue } from "../lib/logQueue";
 import { APP_HTTP } from "../mav/link";
+import { noteUi, writeParam } from "../mav/cmd";
 import { getLatest } from "../mav/store";
 import { useStorePicked } from "../mav/view";
 
 type Tr = (key: string, vars?: Record<string, string | number>) => string;
 
 type OnboardLog = { id: number; size: number; time_utc: number; num_logs?: number; last_log_num?: number };
-type LogBrief = { id: number; size: number; firmware: string; frame: string; start_utc: string; duration_us: number; error: string };
-type FlagKind = "crash" | "err" | "fs" | "batt" | "clip";
-type Flag = { kind: FlagKind; count: number; at_s: number; text: string };
+type LogBrief = { id: number; size: number; firmware: string; frame: string; start_utc: string; duration_us: number; error: string; head_hash?: string };
 type Scan = { firmware: string; frame: string; start_utc: string; duration_us: number; armed_s: number | null; flights: number | null; flags: Flag[] };
 type Change = { since: string; since_onboard: number | null; count: number; params: { name: string; from: number; to: number }[]; firmware: { from: string; to: string } | null };
 type LocalLog = {
@@ -23,6 +23,8 @@ type LocalLog = {
   hash: string | null;
   vehicle: string;
   onboard_id?: number | null;
+  /** SHA-256 of the file's first 64 KiB, as the board's brief has it for its logs. */
+  head_hash?: string | null;
   saved_at?: string | null;
   flight_utc?: string | null;
   flight_stamp?: string;
@@ -31,6 +33,9 @@ type LocalLog = {
   star: boolean;
   note: string;
   changes?: Change;
+  /** The local log tools' findings, null until they ran; `findings_pending` while they run. */
+  findings?: Findings | null;
+  findings_pending?: boolean;
 };
 type CloudLog = { hash: string; name: string; board: string; onboard_id: number | null; bytes: number; stored_bytes: number; stored: boolean; uploaded_at: string | null; meta: { star: boolean; note: string; updated_at: number } };
 type CloudState = { signed_in: boolean; mode: "off" | "starred" | "all"; used?: number; limit?: number; plan?: string; logs: CloudLog[]; error?: string };
@@ -73,8 +78,20 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "cloud", label: "Cloud" },
   { id: "missing", label: "Not saved" },
 ];
-const FLAG_LABEL: Record<FlagKind, string> = { crash: "Crash", err: "Errors", fs: "Failsafe", batt: "Low battery", clip: "Clipping" };
-const HOT = new Set<FlagKind>(["crash", "err"]);
+/** The flags of the scan and the findings of the log tools, as one mark: labels when wide, one count when narrow. */
+function Marks({ flags, findings, compact }: { flags: Flag[]; findings: Finding[]; compact: boolean }) {
+  const t = useT();
+  if (!flags.length && !findings.length) return <i className="log-nil">—</i>;
+  const hot = flags.some((f) => HOT.has(f.kind)) || findings.some((f) => f.severity === "critical");
+  if (compact) return <span className={`log-flag ${hot ? "hot" : "amber"}`}>{flags.length + findings.length}</span>;
+  return (
+    <>
+      {flags.map((f) => <span key={f.kind} className={`log-flag ${HOT.has(f.kind) ? "hot" : "amber"}`}>{t(FLAG_LABEL[f.kind])}{f.count > 1 ? ` ${f.count}` : ""}</span>)}
+      {findings.length ? <span className={`log-flag ${findings.some((f) => f.severity === "critical") ? "hot" : "amber"}`}>✦ {findings.length}</span> : null}
+    </>
+  );
+}
+
 const LAST_BOARD = "arduloops.logs.lastBoard";
 const STATUS_MS = 6000;
 
@@ -113,17 +130,6 @@ function stampDate(stamp: string | undefined): Date | null {
   return m ? dateOf(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`) : null;
 }
 
-function spanText(seconds: number, t: Tr): string {
-  const total = Math.max(1, Math.round(seconds));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h) return t("{h} h {m} min", { h, m });
-  if (m && s) return t("{m} min {s} s", { m, s });
-  if (m) return t("{m} min", { m });
-  return t("{s} s", { s });
-}
-
 /** Armed time and flights, or never armed. Short: the time only. */
 function armedText(row: Row, t: Tr, short: boolean): string {
   const scan = row.scan;
@@ -143,6 +149,14 @@ function shortUid(folder: string): string {
 
 function fileName(id: string): string {
   return id.split(/[/\\]/).pop() || id;
+}
+
+/** A file on this computer is this board log when the board, the log number and the size agree, or
+ * when its first bytes match the board's: ArduPilot's block logger can list another size for a log
+ * than the file it gives (the end of the last log moves), and log numbers start again after an erase. */
+function sameLog(file: LocalLog, board: string, log: { id: number; size: number }, brief?: LogBrief): boolean {
+  if (file.vehicle !== board || file.onboard_id !== log.id) return false;
+  return file.bytes === log.size || (!!brief?.head_hash && file.head_hash === brief.head_hash);
 }
 
 function newerTexts(curr: string[], prev: string[]): string[] {
@@ -193,12 +207,6 @@ function Where({ row, up, other }: { row: Row; up: boolean; other: boolean }) {
   );
 }
 
-function Flags({ flags, compact }: { flags: Flag[]; compact: boolean }) {
-  const t = useT();
-  if (!flags.length) return <i className="log-nil">—</i>;
-  if (compact) return <span className={`log-flag ${flags.some((f) => HOT.has(f.kind)) ? "hot" : "amber"}`}>{flags.length}</span>;
-  return <>{flags.map((f) => <span key={f.kind} className={`log-flag ${HOT.has(f.kind) ? "hot" : "amber"}`}>{t(FLAG_LABEL[f.kind])}{f.count > 1 ? ` ${f.count}` : ""}</span>)}</>;
-}
 
 /** Percent of the board download in progress for this log, or -1 before the first byte. */
 function useDownloadPct(id: number): number {
@@ -207,6 +215,31 @@ function useDownloadPct(id: number): number {
     if (!d || d.id !== id || d.complete || !d.size) return -1;
     return Math.min(100, Math.round((d.received / d.size) * 100));
   });
+}
+
+/** Speed of the board download in progress, from the bytes received over the last 15 s, and the time left. */
+function useDownloadRate(): { bps: number; left: number } | null {
+  const key = useStorePicked((s) => {
+    const d = s.log_download;
+    return d && !d.complete && d.size ? `${d.id}|${d.received}|${d.size}` : "";
+  });
+  const samples = useRef<{ id: string; at: number; got: number }[]>([]);
+  return useMemo(() => {
+    if (!key) {
+      samples.current = [];
+      return null;
+    }
+    const [id, got, size] = key.split("|");
+    const now = Date.now();
+    const list = samples.current.filter((row) => row.id === id && now - row.at <= 15_000);
+    list.push({ id, at: now, got: Number(got) });
+    samples.current = list;
+    const first = list[0];
+    const span = (now - first.at) / 1000;
+    if (span < 3) return null;
+    const bps = (Number(got) - first.got) / span;
+    return bps > 0 ? { bps, left: (Number(size) - Number(got)) / bps } : null;
+  }, [key]);
 }
 
 function DownloadingAction({ id, onCancel }: { id: number; onCancel: () => void }) {
@@ -269,11 +302,13 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
   const [status, setStatusRaw] = useState<Status>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [menu, setMenu] = useState<Menu>(null);
+  const [findingsKey, setFindingsKey] = useState("");
   const [pop, setPop] = useState<Pop>(null);
   const [erasing, setErasing] = useState(false);
   const [fetching, setFetching] = useState("");
   const [autoOn, setAutoOn] = useState(false);
   const textsAtErase = useRef<string[]>([]);
+  const textsAtList = useRef<string[]>([]);
   const pendingMeta = useRef(new Map<string, { star?: boolean; note?: string }>());
   const statusTimer = useRef(0);
   const viewRef = useRef<HTMLDivElement>(null);
@@ -299,6 +334,7 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
 
   const loadBoard = useCallback(() => {
     if (!link.ok || link.armed) return;
+    textsAtList.current = getLatest().texts ?? [];
     setLoading(true);
     void getJson<{ logs?: OnboardLog[] }>("/logs?refresh=1")
       .then((body) => setLogs(Array.isArray(body.logs) ? body.logs : []))
@@ -352,7 +388,7 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
         if (ac.signal.aborted) return;
         const known = briefs[log.id];
         if (known && known.size === log.size && (!known.error || (briefTries.current.get(`${log.id}:${log.size}`) ?? 0) >= 2)) continue;
-        if (local.some((file) => file.vehicle === key && file.onboard_id === log.id && file.bytes === log.size)) continue;
+        if (local.some((file) => sameLog(file, key, log))) continue;
         setReading(log.id);
         briefTries.current.set(`${log.id}:${log.size}`, (briefTries.current.get(`${log.id}:${log.size}`) ?? 0) + 1);
         try {
@@ -394,6 +430,14 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
       stop = true;
     };
   }, [active, local, scope, board, loadLocal]);
+
+  // The bridge runs the local log tools on each stored log in the background: read the list again while any run.
+  const findingsPending = local.some((file) => file.findings_pending);
+  useEffect(() => {
+    if (!active || !findingsPending) return;
+    const timer = window.setTimeout(loadLocal, 3000);
+    return () => window.clearTimeout(timer);
+  }, [active, findingsPending, local, loadLocal]);
 
   // ---------- downloads (queue) ----------
 
@@ -615,6 +659,11 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
     openAssistant([t("What happened in this flight?"), t("Is anything in this log worth fixing?")], id);
   }
 
+  function askFindings(row: Row) {
+    if (!row.file) return ask(row);
+    askAboutFindings(row.file.id, row.file.findings, t);
+  }
+
   // ---------- rows ----------
 
   const rows = useMemo<Row[]>(() => {
@@ -634,11 +683,12 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
       at: dateOf(file.scan?.start_utc) ?? dateOf(file.flight_utc) ?? stampDate(file.flight_stamp) ?? dateOf(file.saved_at),
     });
     const boardRows: Row[] = [...logs].sort((a, b) => b.id - a.id).map((log) => {
-      const file = local.find((f) => f.vehicle === key && f.onboard_id === log.id && f.bytes === log.size);
+      const brief = briefs[log.id]?.size === log.size ? briefs[log.id] : undefined;
+      // A log the board keeps writing to has older, shorter copies with the same head: the fullest one counts.
+      const file = local.filter((f) => sameLog(f, key, log, brief)).sort((a, b) => b.bytes - a.bytes)[0];
       if (file) usedFiles.add(file.id);
       const cloudCopy = file?.hash ? cloudBy.get(file.hash) : cloud.logs.find((c) => c.board === key && c.onboard_id === log.id && c.bytes === log.size);
       if (cloudCopy) usedCloud.add(cloudCopy.hash);
-      const brief = briefs[log.id]?.size === log.size ? briefs[log.id] : undefined;
       const base: Row = {
         key: `b${log.id}`,
         log,
@@ -711,12 +761,33 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
     return list;
   })();
 
+  const rate = useDownloadRate();
+  // LOG_FILE_DSRMROT on the board: 1 closes the log at disarm, so each flight is its own log.
+  // At 0 every flight until a reboot goes into the same log.
+  const perFlight = useStorePicked((s) => (opened ? undefined : s.params?.LOG_FILE_DSRMROT));
+  async function togglePerFlight() {
+    if (perFlight == null) return;
+    const next = perFlight >= 0.5 ? 0 : 1;
+    const refused = await writeParam("LOG_FILE_DSRMROT", next);
+    if (refused) {
+      setStatus({ tone: "bad", text: t(refused) });
+      return;
+    }
+    noteUi([{ kind: "param", name: "LOG_FILE_DSRMROT", value: next, from: perFlight }]);
+    setStatus({ tone: "ok", text: next ? t("Each flight now gets its own log.") : t("Flights now go into one log until a reboot.") });
+  }
   const selected = visible.filter((row) => sel.has(row.key));
   // The queue speaks for itself while it runs, unless something newer is in the slot.
   const shown: Status = status ?? (uploading
     ? { tone: "", text: t("Uploading log {id} to the cloud · {pct}%", { id: local.find((f) => f.hash === uploading.hash)?.onboard_id ?? fileName(uploading.id), pct: uploading.pct }) }
     : queue.current
-    ? { tone: "", text: queue.waiting.length ? t("Downloading log {id} · {n} waiting", { id: queue.current.id, n: queue.waiting.length }) : t("Downloading log {id}", { id: queue.current.id }) }
+    ? { tone: "", text: [
+        queue.waiting.length ? t("Downloading log {id} · {n} waiting", { id: queue.current.id, n: queue.waiting.length }) : t("Downloading log {id}", { id: queue.current.id }),
+        rate ? t("{v} KB/s", { v: (rate.bps / 1024).toFixed(rate.bps < 10_240 ? 1 : 0) }) : "",
+        rate ? (rate.left >= 90 ? t("about {n} min left", { n: Math.round(rate.left / 60) }) : t("about {n} s left", { n: Math.max(1, Math.round(rate.left)) })) : "",
+        // A radio or Wi-Fi telemetry link moves a log at its serial speed; USB is usually many times faster.
+        rate && rate.bps < 30_720 ? t("a USB cable is faster") : "",
+      ].filter(Boolean).join(" · ") }
     : null);
   const canErase = link.ok && !link.armed && logs.length > 0 && !erasing;
   const busyRow = queue.current?.id ?? 0;
@@ -734,7 +805,10 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
   function showPop(ev: ReactMouseEvent, kind: "flags" | "changes", row: Row) {
     const box = (ev.currentTarget as HTMLElement).getBoundingClientRect();
     const view = viewRef.current?.getBoundingClientRect();
-    setPop({ kind, key: row.key, x: box.left - (view?.left ?? 0), y: box.bottom - (view?.top ?? 0) + 4 });
+    // The popover keeps its width: near the right edge it moves left instead of narrowing.
+    const left = box.left - (view?.left ?? 0);
+    const room = (view?.width ?? Infinity) - 472;
+    setPop({ kind, key: row.key, x: Math.max(8, Math.min(left, room)), y: box.bottom - (view?.top ?? 0) + 4 });
   }
 
   useEffect(() => {
@@ -743,6 +817,16 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
     window.addEventListener("pointerdown", close);
     return () => window.removeEventListener("pointerdown", close);
   }, [menu]);
+
+  // The board's messages, newest first. ArduPilot's block logger says "Chip full" when its flash is full;
+  // until an erase, new flights are not logged.
+  const storageFull = !opened && link.ok && (() => {
+    const at = texts.findIndex((line) => line.includes("Chip full"));
+    return at >= 0 && !texts.slice(0, at).some((line) => line.includes("Chip erase complete"));
+  })();
+  // "No last page of log N" answers a list request when the block logger cannot find where a log ends:
+  // its list is wrong until the board scans its flash again at boot. Only an answer to the latest list counts.
+  const indexBroken = !opened && link.ok && newerTexts(texts, textsAtList.current).some((line) => line.includes("No last page of log"));
 
   const gap = opened ? t("This board is not on the link. These are its logs on this computer.")
     : !link.ok
@@ -757,6 +841,7 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
     : t("No logs yet.");
 
   const menuRow = menu?.kind === "row" ? rows.find((row) => row.key === menu.key) : undefined;
+  const findingsRow = findingsKey ? rows.find((row) => row.key === findingsKey) : undefined;
   const popRow = pop ? rows.find((row) => row.key === pop.key) : undefined;
 
   function rowAction(row: Row): ReactNode {
@@ -766,7 +851,7 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
     if (row.log && !row.file && queuedIds.has(row.log.id)) {
       return <button type="button" className="log-act ghost dim" onClick={() => void cancelDownload(row.log!.id)}>{t("Queued")}<b aria-hidden="true">×</b></button>;
     }
-    if (row.file) return <button type="button" className="log-act ghost" title={t("Show in folder")} onClick={() => void reveal(row.file!.id)}>{t("Show")}</button>;
+    if (row.file) return <button type="button" className="log-act ghost reveal" title={t("Show in folder")} onClick={() => void reveal(row.file!.id)}>{t("Show")}</button>;
     if (row.log && row.brief?.error === NO_LOG_DATA) {
       return <button type="button" className="log-act ghost dim" disabled title={t(NO_LOG_DATA)}>{t("Empty")}</button>;
     }
@@ -914,6 +999,8 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
           <span role="columnheader" aria-hidden="true" />
         </div>
         <div className="log-body">
+          {storageFull ? <div className="log-gap full" role="status">{ICON.board}<span>{t("The board's log storage is full: new flights are not recorded. Download the logs you need, then erase the board.")}</span></div> : null}
+          {indexBroken ? <div className="log-gap full" role="status">{ICON.board}<span>{t("The board cannot find where its last log ends, so this list is wrong. Reboot the flight controller: it scans its log storage again at boot.")}</span></div> : null}
           {gap ? <div className="log-gap">{ICON.board}<span>{gap}</span></div> : null}
           {visible.length === 0 ? <p className="log-empty">{loading && !logs.length ? t("Refreshing…") : emptyText}</p> : visible.map((row) => {
             const other = !!row.board && row.board !== board && scope === "all";
@@ -928,7 +1015,7 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
                 <span className="c-sel" role="cell">
                   <input type="checkbox" aria-label={t("Select log {id}", { id: row.num ?? row.name })} checked={sel.has(row.key)} onChange={(ev) => setSel((s) => { const next = new Set(s); if (ev.target.checked) next.add(row.key); else next.delete(row.key); return next; })} />
                 </span>
-                <span role="cell">
+                <span className="c-star" role="cell">
                   <button type="button" className={`log-star${row.star ? " on" : ""}`} aria-pressed={row.star} aria-label={row.star ? t("Unstar") : t("Star")} onClick={() => setMeta(row, { star: !row.star })}>{row.star ? "★" : "☆"}</button>
                 </span>
                 <span className="c-id" role="cell">
@@ -943,9 +1030,13 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
                 <span className={`c-armed${armed === t("never armed") ? " log-nil" : ""}`} role="cell" title={armed || undefined}>
                   <span className="wide-only">{armed || <i className="log-nil">—</i>}</span><span className="narrow-only">{armedShort || <i className="log-nil">—</i>}</span>
                 </span>
-                <span className="c-flags" role="cell" onMouseEnter={(ev) => row.scan?.flags.length && showPop(ev, "flags", row)} onMouseLeave={() => setPop(null)}>
-                  <span className="wide-only"><Flags flags={row.scan?.flags ?? []} compact={false} /></span>
-                  <span className="narrow-only"><Flags flags={row.scan?.flags ?? []} compact /></span>
+                <span className="c-flags" role="cell">
+                  {row.scan?.flags.length || row.file?.findings?.findings.length ? (
+                    <button type="button" className="log-marks" title={t("Flags and findings")} onMouseEnter={(ev) => showPop(ev, "flags", row)} onMouseLeave={() => setPop(null)} onClick={() => { setPop(null); setFindingsKey(row.key); }}>
+                      <span className="wide-only"><Marks flags={row.scan?.flags ?? []} findings={row.file?.findings?.findings ?? []} compact={false} /></span>
+                      <span className="narrow-only"><Marks flags={row.scan?.flags ?? []} findings={row.file?.findings?.findings ?? []} compact /></span>
+                    </button>
+                  ) : <i className="log-nil">—</i>}
                 </span>
                 <span className="c-chg" role="cell" onMouseEnter={(ev) => row.changes && (row.changes.count || row.changes.firmware) && showPop(ev, "changes", row)} onMouseLeave={() => setPop(null)}>
                   {row.changes?.firmware ? <span className="log-chg">FW {row.changes.firmware.from} → {row.changes.firmware.to}</span>
@@ -954,7 +1045,7 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
                 </span>
                 <span className="c-det" role="cell">{details(row)}</span>
                 <span className="c-size r" role="cell">{sizeLabel(row.size)}</span>
-                <span role="cell"><Where row={row} up={!!up} other={other} /></span>
+                <span className="c-where" role="cell"><Where row={row} up={!!up} other={other} /></span>
                 <span className="c-act" role="cell">
                   {rowAction(row)}
                   <button type="button" className="log-kebab" aria-label={t("More actions")} onPointerDown={(ev) => ev.stopPropagation()} onClick={(ev) => (menu?.kind === "row" && menu.key === row.key ? setMenu(null) : openMenu(ev, { kind: "row", key: row.key }))}>⋯</button>
@@ -973,6 +1064,9 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
           <button type="button" disabled={!key} onClick={() => { const on = !autoOn; setAutoDownload(key, on, Math.max(-1, ...logs.map((l) => l.id))); setAutoOn(on); setMenu(null); }}>
             <span>{autoOn ? "✓ " : ""}{t("Download new logs on connect")}</span><small>{t("this controller")}</small>
           </button>
+          <button type="button" disabled={perFlight == null || !link.ok || link.armed} title={t("Off: every flight until a reboot goes into one log. On: the board closes the log at disarm, so the next flight starts a new one.")} onClick={() => { setMenu(null); void togglePerFlight(); }}>
+            <span>{perFlight != null && perFlight >= 0.5 ? "✓ " : ""}{t("A new log for each flight")}</span><small>LOG_FILE_DSRMROT</small>
+          </button>
           <button type="button" onClick={() => { setMenu(null); setDialog({ kind: "cloud" }); }}>
             <span>{t("Cloud…")}</span>
             <small>{cloud.signed_in ? `${t(cloud.mode === "off" ? "Off" : cloud.mode === "starred" ? "Starred only" : "Every downloaded log")} · ${mbLabel(cloud.used ?? 0)} / ${mbLabel(cloud.limit ?? 0)}` : t("Not signed in")}</small>
@@ -986,6 +1080,11 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
       {menu?.kind === "row" && menuRow ? (
         <div className="log-menu" style={{ right: `calc(100% - ${menu.x}px)`, top: menu.y + 4 }} onPointerDown={(ev) => ev.stopPropagation()}>
           <button type="button" className="ai" disabled={!menuRow.file && !menuRow.cloud?.stored} onClick={() => { setMenu(null); ask(menuRow); }}>✦ {t("Ask the assistant about this log")}</button>
+          {menuRow.file?.findings?.findings.length ? (
+            <button type="button" className="ai" onClick={() => { setMenu(null); askFindings(menuRow); }}>
+              <span>✦ {t("Ask the assistant about these findings")}</span><small>{t(menuRow.file.findings.findings.length === 1 ? "{n} finding" : "{n} findings", { n: menuRow.file.findings.findings.length })}</small>
+            </button>
+          ) : null}
           <button type="button" disabled={!menuRow.file} onClick={() => { setMenu(null); setDialog({ kind: "share", rows: [menuRow] }); }}><span>{t("Share…")}</span><small>{t("anonymised copy")}</small></button>
           <button type="button" onClick={() => { setMenu(null); setEditing({ key: menuRow.key, draft: menuRow.note }); }}>{t("Edit note")}</button>
           <button type="button" onClick={() => { setMenu(null); setMeta(menuRow, { star: !menuRow.star }); }}>★ {menuRow.star ? t("Unstar") : t("Star")}</button>
@@ -1007,13 +1106,20 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
         <div className="log-pop" style={{ left: pop.x, top: pop.y }}>
           {pop.kind === "flags" ? (
             <>
-              <b>{t("Log {id} · flags", { id: popRow.num ?? popRow.name })}</b>
+              <b>{t("Log {id} · flags and findings", { id: popRow.num ?? popRow.name })}</b>
               {(popRow.scan?.flags ?? []).map((f) => (
                 <div className="log-pop-line" key={f.kind}>
                   <span className={`log-flag ${HOT.has(f.kind) ? "hot" : "amber"}`}>{t(FLAG_LABEL[f.kind])}{f.count > 1 ? ` ${f.count}` : ""}</span>
                   <span>{f.at_s ? `${spanText(f.at_s, t)} · ` : ""}{f.text}</span>
                 </div>
               ))}
+              {(popRow.file?.findings?.findings ?? []).map((f, i) => (
+                <div className="log-pop-line" key={i}>
+                  <span className={`log-flag ${f.severity === "critical" ? "hot" : "amber"}`}>{toolLabel(f.tool, t)}</span>
+                  <span>{argsText(f.args) ? `${argsText(f.args)} · ` : ""}{f.text}</span>
+                </div>
+              ))}
+              <span className="log-dim">{t("Click for the details and to analyze with the assistant.")}</span>
             </>
           ) : (
             <>
@@ -1028,6 +1134,13 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
             </>
           )}
         </div>
+      ) : null}
+
+      {findingsRow?.file ? (
+        <FindingsWindow
+          data={{ id: findingsRow.file.id, name: String(findingsRow.num ?? findingsRow.name), flags: findingsRow.scan?.flags ?? [], findings: findingsRow.file.findings ?? null, pending: !!findingsRow.file.findings_pending }}
+          onClose={() => setFindingsKey("")}
+        />
       ) : null}
 
       {dialog ? (

@@ -58,7 +58,7 @@ Pick **TCP**, **UDP**, or **SER** in the header, fill the field, and click **Lin
 | TCP | `127.0.0.1:5760` | SITL you started with `--no-mavproxy` |
 | TCP | `127.0.0.1:5763` | SITL behind MAVProxy |
 | UDP | `14550` | Listen. The vehicle sends to this port |
-| UDP | `192.168.6.167:14550` | Send to the vehicle |
+| UDP | `192.168.1.20:14550` | Send to the vehicle |
 | SER | `COM3` and `115200` | USB or a radio. Desktop only; Android has no serial |
 
 A listen on 14550 also announces on 14555, and a send to port 14550 tries 14555 on that host as well. That is how an ESP8266 or SiK Wi-Fi bridge answers. A host and port 14550 or 14551 typed under TCP is opened as UDP.

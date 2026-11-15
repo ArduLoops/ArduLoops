@@ -8,20 +8,22 @@
  * Pause and plot span follow the main window over a BroadcastChannel.
  */
 
-export type DetachKind = "live" | "chart" | "doc" | "board" | "assistant";
+export type DetachKind = "live" | "chart" | "doc" | "board" | "assistant" | "findings" | "studio";
 
 export type Detached = { kind: DetachKind; label: string; payload: unknown };
 
 const PAYLOAD_KEY = "arduloops.detach.";
 const CHANNEL = "arduloops.windows";
 /** Kinds with one window: opening again updates and raises it. The others get a new window per item. */
-const SINGLE: Record<DetachKind, boolean> = { live: true, board: true, assistant: true, chart: false, doc: false };
+const SINGLE: Record<DetachKind, boolean> = { live: true, board: true, assistant: true, chart: false, doc: false, findings: false, studio: false };
 const SIZE: Record<DetachKind, { width: number; height: number }> = {
   live: { width: 520, height: 860 },
   chart: { width: 900, height: 560 },
   doc: { width: 900, height: 720 },
   board: { width: 760, height: 780 },
   assistant: { width: 480, height: 780 },
+  findings: { width: 760, height: 640 },
+  studio: { width: 820, height: 560 },
 };
 
 /** The label `detachWindow` gives a single-window kind. */
@@ -47,6 +49,10 @@ export type WindowMsg =
   | { type: "assistant-down" }
   | { type: "assistant-ask"; detail: unknown }
   | { type: "assistant-options" }
+  /** An Ask from a detached window without the assistant goes to the main window. */
+  | { type: "main-ask"; detail: unknown }
+  /** The loops studio's selected card and axis (lib/studioFocus.ts). */
+  | { type: "studio-focus"; focus: unknown }
   | { type: "setup-view"; view: unknown };
 
 let channel: BroadcastChannel | null | undefined;

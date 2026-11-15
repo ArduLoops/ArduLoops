@@ -5,6 +5,8 @@ import { AuditLibrary } from "../components/AuditLibrary";
 import { ControllerView } from "../components/ControllerView";
 import { PLANE_WORKSPACES, WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
 import { MissionView } from "../components/MissionView";
+import { StudioWindowsHost } from "../components/StudioWindows";
+import { planeAxis, planePick, setStudioFocus, useStudioFocus } from "../lib/studioFocus";
 
 const ScriptsLibrary = lazy(() => import("../components/ScriptsLibrary").then((mod) => ({ default: mod.ScriptsLibrary })));
 import { Scope } from "../components/Scope";
@@ -19,33 +21,34 @@ import { PlaneInspect } from "./Inspect";
 import { PlaneMap } from "./Map";
 import { PlaneLoopView } from "./LoopView";
 
-export function PlaneApp({
+export function PlaneApp({ log }: { log: LogRow[] }) {
+  return (
+    <>
+      <PlaneWorkspaces log={log} />
+      <StudioWindowsHost frame="plane" />
+    </>
+  );
+}
+
+function PlaneWorkspaces({
   log,
 }: {
   log: LogRow[];
 }) {
   const t = useT();
-  const [sel, setSel] = useState<string | null>(null);
-  const [axis, setAxis] = useState<Axis>("roll");
-  const [showAll, setShowAll] = useState(false);
+  // The selected card and axis are the app's, so the studio's panes in windows follow them (lib/studioFocus.ts).
+  const { sel, axis, showAll } = useStudioFocus();
+  const setShowAll = (on: boolean) => setStudioFocus({ showAll: on });
   const [workspace, setWorkspace] = useState<WorkspaceId>("loops");
   const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
   const loopAxis = axis === "d" ? "roll" : axis;
 
   function onAxis(next: Axis) {
-    setAxis(next);
-    if (next === "pitch") setSel("ptch_rate");
-    else if (next === "yaw") setSel("yaw_damp");
-    else setSel("rll_rate");
+    planeAxis(next);
     addLog(t("Axis · {axis}", { axis: t(axisLabel(next)) }), "cmd");
   }
 
-  function onPick(next: string | null) {
-    setSel(next);
-    if (next === "ptch_ang" || next === "ptch_rate" || next === "elevator") setAxis("pitch");
-    else if (next === "yaw_damp" || next === "rudder") setAxis("yaw");
-    else if (next === "rll_ang" || next === "rll_rate" || next === "aileron" || next === "ahrs") setAxis("roll");
-  }
+  const onPick = planePick;
 
   if (workspace === "mission") {
     return (

@@ -218,7 +218,7 @@ fn tool_schema() -> Value {
                 "Each entry has `from`, `command`, `hold_s`, `overshoot`, and `reached`.",
                 "`sides` returns `beyond` and `short`. Each has `count`, `share`, `mean`, and `p95`.",
                 "On a message with Tar and Act, `track` also returns `p_rms`, `i_rms`, `d_rms`, `ff_rms`, and `p_share`, `i_share`, `d_share`, `ff_share`.",
-                "`frf` returns a bin for each frequency with `gain_db`, `phase_deg`, and `coherence`, plus `bandwidth_hz` and `group_delay_s`.",
+                "`frf` returns a bin for each measured frequency with `gain_db`, `phase_deg`, and `coherence`, plus `bandwidth_hz` and `group_delay_s`, or `not_measured` when the interval holds no response.",
                 "Pass `jobs`, a list of {`message`, `field`, `op`, `start_us`, `end_us`}, at most 16, all on `file`.",
                 "`message`, `field`, and `op` are required.",
                 "`start_us` and `end_us` bound that job.",
@@ -260,7 +260,7 @@ fn tool_schema() -> Value {
         {
             "name": "log_magfit",
             "description": doc!(
-                "Calculates compass calibration parameters from a DataFlash log using least-squares fit against the World Magnetic Model (equivalent to ArduPilot WebTools MAGFit).",
+                "Fits compass calibration parameters to one local log by least squares against the World Magnetic Model, as ArduPilot WebTools MAGFit does.",
                 "Returns `orig_error_mgauss`, `fit_error_mgauss`, `reduction_pct`, `coverage_pct`, `orientation` (logged, best_fit, matches), and `params` (offsets, diagonals, off-diagonals, scale, motor compensation, and orientation).",
                 "`compass` is the compass index: 1 (default), 2, or 3.",
                 "`fit_type` is `offsets`, `scale`, or `iron` (default).",
@@ -308,9 +308,9 @@ fn tool_schema() -> Value {
         {
             "name": "log_audit",
             "description": doc!(
-                "Performs a comprehensive flight safety, crash detection, and hardware health audit from a DataFlash log (equivalent to ArduPilot WebTools HardwareReport with FlightMD and ardupilot-mcp rule extensions).",
-                "Evaluates a deterministic health score (0..100) across vibrations, clipping, 5V brownouts, battery sag, EKF innovations/lane switches, in-flight GPS quality, motor saturation, and safety parameters.",
-                "Returns structured category verdicts (PASS/WARN/FAIL), prioritized issues with recommendations, and key timeline intervals for charting.",
+                "Checks one local log against a fixed set of rules for vibration, clipping, board voltage, battery sag, EKF, GPS, motor saturation, crash events, and failsafe parameters, as ArduPilot WebTools HardwareReport does with FlightMD and ardupilot-mcp rules.",
+                "Returns the measured extremes of each subsystem, each rule that fired as an issue with its number, a score counted from those issues, and the intervals around the worst moments.",
+                "A value the log has no records for is null.",
             ),
             "parameters": {
                 "type": "object",
@@ -323,9 +323,9 @@ fn tool_schema() -> Value {
         {
             "name": "log_motor_balance",
             "description": doc!(
-                "Analyzes in-flight motor thrust balance, center of gravity (CG) offsets, and motor arm twist from a DataFlash log.",
-                "Evaluates individual motor PWM outputs (RCOU) and ESC telemetry (RPM, current, temperature).",
-                "Diagnoses forward/aft CG bias, lateral CG bias, CW vs CCW motor twist, and damaged or degraded motor/propeller outliers.",
+                "Compares the average output of each motor in flight in one local log.",
+                "Returns each motor's average `RCOU` output and its difference from the mean, with ESC RPM, current, and temperature when the log has them.",
+                "On four motors it also returns the front-rear, left-right, and CW-CCW differences.",
                 "`start_us` and `end_us` bound the analyzed flight interval.",
             ),
             "parameters": {
@@ -341,9 +341,11 @@ fn tool_schema() -> Value {
         {
             "name": "log_pid_review",
             "description": doc!(
-                "Evaluates rate PID tuning quality, stability margins, and step responses from a DataFlash log (equivalent to ArduPilot WebTools PIDReview).",
-                "Computes Phase Margin (PM), Gain Margin (GM), Rise Time, Peak Overshoot (%), and Settling Time.",
-                "Recommends concrete P and D parameter changes to achieve optimal damping and phase margin.",
+                "Measures how one rate loop followed its target in a DataFlash log, as ArduPilot WebTools PIDReview does.",
+                "Estimates the closed-loop response from the whole interval and returns it as a step response, with rise time, overshoot, and settling time, and as a frequency response, with bandwidth and coherence.",
+                "Returns phase margin, gain margin, and the sensitivity peak when the log supports them, and the rate gains in the log.",
+                "It reads the copter loops, the quadplane VTOL loops, or the fixed-wing loops, whichever the log holds more of in the interval, and names that in `controller`.",
+                "A value the log does not support is null.",
                 "`axis` is `roll` (default), `pitch`, or `yaw`.",
                 "`start_us` and `end_us` bound the analyzed flight interval.",
             ),
@@ -457,9 +459,10 @@ fn tool_schema() -> Value {
             "description": doc!(
                 "Draw the gyro spectrum under the reply.",
                 "`x` is Hz across the FFT bins.",
-                "`X`, `Y`, and `Z` are dB on each gyro axis against the loudest raw bin.",
-                "`X filtered`, `Y filtered`, and `Z filtered` are that scale on the filtered capture, and only when the log has one.",
-                "`notch` is the configured harmonic notch, and `notch 2` the second, drawn only when that filter is enabled in the log.",
+                "`X`, `Y`, and `Z` are the amplitude on each gyro axis in dB, averaged over every batch, as WebTools FilterReview draws it.",
+                "When the log also has a filtered capture, the raw lines are named `X pre-filter` and drawn faint and dashed, and `X post-filter` are the filtered ones.",
+                "`filters`, on the right axis, is the gain of the harmonic notches and the gyro low-pass configured in the log, drawn only when the log has them.",
+                "`harmonic, notched` and `harmonic, not notched` mark the multiples of the motor frequency the notch follows.",
                 "Slug, remove, and the five-chart limit work as on `show_chart`.",
             ),
             "parameters": {
@@ -477,7 +480,7 @@ fn tool_schema() -> Value {
             "description": doc!(
                 "Draw the gyro spectrogram under the reply.",
                 "The map is time against frequency.",
-                "Color is dB against the loudest cell of the raw pre-filter capture.",
+                "Color is the amplitude in dB of the raw pre-filter capture, on a scale that runs 50 dB down from the loudest cell at or above 20 Hz.",
                 "`notch` is the notch frequency the log recorded, drawn on that map, and only when that column is present.",
                 "Slug, remove, and the five-chart limit work as on `show_chart`.",
             ),
@@ -486,6 +489,33 @@ fn tool_schema() -> Value {
                 "properties": {
                     "file": { "type": "string", "description": "An id from `list_logs`, or `local.id` from `vehicle_logs`. Omit it for the log already selected." },
                     "title": { "type": "string", "description": "The heading shown on the chart. Omit it for `spectrogram`." },
+                    "slug": { "type": "string", "description": "A short name for this chart in the turn. The same slug replaces it." },
+                    "remove": { "type": "boolean", "description": "Remove the chart with this `slug`. `file` is not used." }
+                }
+            }
+        },
+        {
+            "name": "show_pid_response",
+            "description": doc!(
+                "Draw the measured response of the rate loops under the reply.",
+                "`kind: step` is the response to a unit step of the rate target against milliseconds, estimated from the whole interval.",
+                "`kind: bode` is the closed-loop gain in dB and phase in degrees against Hz.",
+                "`axis` is `all` (default), `roll`, `pitch`, or `yaw`.",
+                "The step chart shades the standard error of each curve and the band of 0.9 to 1.1 around the target; the Bode chart shades −3 to +3 dB.",
+                "The legend of each axis carries its overshoot and rise time, or its resonance and bandwidth.",
+                "`start_us` and `end_us` bound the interval the estimate uses.",
+                "The result names each axis drawn with its numbers, and each axis not drawn with the reason.",
+                "Slug, remove, and the five-chart limit work as on `show_chart`.",
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "An id from `list_logs`, or `local.id` from `vehicle_logs`. Omit it for the log already selected." },
+                    "kind": { "type": "string", "enum": ["step", "bode"], "description": "`step` (default) or `bode`." },
+                    "axis": { "type": "string", "enum": ["all", "roll", "pitch", "yaw"], "description": "Rate axis to draw. Defaults to `all`." },
+                    "start_us": { "type": "number", "description": "TimeUS lower bound, in microseconds. Omit it for no lower bound." },
+                    "end_us": { "type": "number", "description": "TimeUS upper bound, in microseconds. Omit it for no upper bound." },
+                    "title": { "type": "string", "description": "The heading shown on the chart. Omit it for the default." },
                     "slug": { "type": "string", "description": "A short name for this chart in the turn. The same slug replaces it." },
                     "remove": { "type": "boolean", "description": "Remove the chart with this `slug`. `file` is not used." }
                 }

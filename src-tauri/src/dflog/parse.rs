@@ -64,6 +64,36 @@ fn walk(bytes: &[u8], formats: &BTreeMap<u8, Fmt>, mut on: impl FnMut(&Fmt, &[u8
     }, incomplete);
 }
 
+/// `walk` for a known set of messages. Records of every other message are stepped over without
+/// being decoded, which is most of the cost of reading a log.
+fn walk_only(bytes: &[u8], formats: &BTreeMap<u8, Fmt>, names: &[&str], mut on: impl FnMut(&Fmt, &[u8], &[Value]), incomplete: &mut bool) {
+    let mut wanted = [false; 256];
+    for (kind, fmt) in formats {
+        wanted[*kind as usize] = names.iter().any(|name| *name == fmt.name);
+    }
+    let mut i = 0;
+    while i + 3 <= bytes.len() {
+        if bytes[i] != HEAD1 || bytes[i + 1] != HEAD2 {
+            i += 1;
+            continue;
+        }
+        let kind = bytes[i + 2];
+        let Some(fmt) = formats.get(&kind) else {
+            i += 1;
+            continue;
+        };
+        if i + fmt.length > bytes.len() {
+            *incomplete = true;
+            break;
+        }
+        if wanted[kind as usize] {
+            let body = &bytes[i + 3..i + fmt.length];
+            on(fmt, body, &decode_body(&fmt.format, body));
+        }
+        i += fmt.length;
+    }
+}
+
 /// Decodes only the records of one message, and stops when `on` returns true.
 /// A whole-log scan for one message stays fast because the rest are only skipped.
 fn find_record(bytes: &[u8], formats: &BTreeMap<u8, Fmt>, name: &str, mut on: impl FnMut(&Fmt, &[Value]) -> bool) -> bool {

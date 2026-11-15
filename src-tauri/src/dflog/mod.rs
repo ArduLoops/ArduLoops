@@ -42,6 +42,9 @@ include!("pid_review.rs");
 // Logs table: per-file scan, changes, delete to the Recycle Bin.
 include!("scan.rs");
 
+// Findings: the log tools run once per stored log, cached per file hash.
+include!("findings.rs");
+
 // Share: anonymised copies in a .zip.
 include!("share.rs");
 

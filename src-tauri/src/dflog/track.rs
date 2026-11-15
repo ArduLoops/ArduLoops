@@ -34,7 +34,7 @@ fn track_bytes(bytes: &[u8], message: &str, field: &str, start_us: Option<u64>, 
     let wanted = fmt.name.clone();
     let mut rows = Vec::new();
     let mut incomplete = false;
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &[wanted.as_str()], |fmt, _, values| {
         if fmt.name != wanted {
             return;
         }
@@ -897,7 +897,7 @@ fn frf_bytes(bytes: &[u8], message: &str, field: &str, start_us: Option<u64>, en
     let wanted = fmt.name.clone();
     let mut samples = Vec::new();
     let mut incomplete = false;
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &[wanted.as_str()], |fmt, _, values| {
         if fmt.name != wanted {
             return;
         }
@@ -930,111 +930,46 @@ fn frf_bytes(bytes: &[u8], message: &str, field: &str, start_us: Option<u64>, en
             ),
         });
     }
-    let mut dts: Vec<f64> = samples.windows(2).filter_map(|pair| {
-        let dt = pair[1].0.saturating_sub(pair[0].0) as f64 / 1_000_000.0;
-        (dt > 0.0).then_some(dt)
-    }).collect();
-    if dts.is_empty() {
+    // The same estimate as log_pid_review, for any pair of command and response.
+    let Some(dt) = pid_median_dt(&samples) else {
         return json!({ "ok": false, "error": "sample rate is unknown" });
-    }
-    dts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let dt = dts[dts.len() / 2];
+    };
     let rate = 1.0 / dt;
-    let seg = if samples.len() >= 256 { 128 } else { 64 };
-    let hop = seg / 2;
-    let segments = (samples.len() - seg) / hop + 1;
-    if segments < 2 {
-        return json!({ "ok": false, "error": "too few samples", "count": samples.len(), "note": "frf needs at least two segments." });
-    }
-    let mean_d = samples.iter().map(|row| row.1).sum::<f64>() / samples.len() as f64;
-    let mean_a = samples.iter().map(|row| row.2).sum::<f64>() / samples.len() as f64;
-    let mut pxx = vec![0.0; seg / 2];
-    let mut pyy = vec![0.0; seg / 2];
-    let mut pxy_re = vec![0.0; seg / 2];
-    let mut pxy_im = vec![0.0; seg / 2];
-    for seg_i in 0..segments {
-        let from = seg_i * hop;
-        let mut x_re = vec![0.0; seg];
-        let mut x_im = vec![0.0; seg];
-        let mut y_re = vec![0.0; seg];
-        let mut y_im = vec![0.0; seg];
-        for i in 0..seg {
-            let w = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / seg as f64).cos();
-            x_re[i] = (samples[from + i].1 - mean_d) * w;
-            y_re[i] = (samples[from + i].2 - mean_a) * w;
-        }
-        fft(&mut x_re, &mut x_im, false);
-        fft(&mut y_re, &mut y_im, false);
-        for k in 0..seg / 2 {
-            pxx[k] += x_re[k] * x_re[k] + x_im[k] * x_im[k];
-            pyy[k] += y_re[k] * y_re[k] + y_im[k] * y_im[k];
-            pxy_re[k] += y_re[k] * x_re[k] + y_im[k] * x_im[k];
-            pxy_im[k] += y_im[k] * x_re[k] - y_re[k] * x_im[k];
-        }
-    }
-    let resolution = rate / seg as f64;
-    let max_hz = (rate * 0.45).min(40.0);
-    let mut chosen = Vec::new();
-    let mut hz = resolution.max(1.0);
-    while hz <= max_hz && chosen.len() < 12 {
-        let bin = (hz / resolution).round() as usize;
-        if (1..seg / 2).contains(&bin) && !chosen.contains(&bin) {
-            chosen.push(bin);
-        }
-        hz += ((max_hz - 1.0) / 11.0).max(resolution);
-    }
-    if chosen.is_empty() {
-        return json!({ "ok": false, "error": "sample rate is too low for this response", "sample_hz": round1(rate) });
-    }
-    let mut bins = Vec::new();
-    let mut prev_phase = 0.0;
-    let mut have_phase = false;
-    let mut delay_w = Vec::new();
-    let mut delay_p = Vec::new();
-    for bin in chosen {
-        let xx = pxx[bin];
-        let yy = pyy[bin];
-        let coherence = if xx > 1e-18 && yy > 1e-18 {
-            ((pxy_re[bin] * pxy_re[bin] + pxy_im[bin] * pxy_im[bin]) / (xx * yy)).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let gain = if xx > 1e-18 { (pxy_re[bin] * pxy_re[bin] + pxy_im[bin] * pxy_im[bin]).sqrt() / xx } else { 0.0 };
-        let mut phase = pxy_im[bin].atan2(pxy_re[bin]);
-        if have_phase {
-            while phase - prev_phase > std::f64::consts::PI { phase -= 2.0 * std::f64::consts::PI; }
-            while prev_phase - phase > std::f64::consts::PI { phase += 2.0 * std::f64::consts::PI; }
-        }
-        prev_phase = phase;
-        have_phase = true;
-        let bin_hz = rate * bin as f64 / seg as f64;
-        if coherence >= 0.5 && bin_hz >= 1.0 && bin_hz <= 20.0 {
-            delay_w.push(2.0 * std::f64::consts::PI * bin_hz);
-            delay_p.push(phase);
-        }
-        bins.push(json!({
-            "hz": round1(bin_hz),
-            "gain_db": round1(if gain <= 1e-12 { -80.0 } else { (20.0 * gain.log10()).clamp(-80.0, 40.0) }),
-            "phase_deg": round1(phase * 180.0 / std::f64::consts::PI),
-            "coherence": round1(coherence),
-        }));
-    }
-    let reference = bins.iter().find(|bin| bin["coherence"].as_f64().unwrap_or(0.0) >= 0.5).and_then(|bin| bin["gain_db"].as_f64());
-    let bandwidth = reference.and_then(|reference| {
-        bins.iter().find(|bin| {
-            bin["coherence"].as_f64().unwrap_or(0.0) >= 0.4 && bin["gain_db"].as_f64().unwrap_or(0.0) <= reference - 3.0
-        }).and_then(|bin| bin["hz"].as_f64())
-    });
-    let group_delay = if delay_w.len() >= 3 {
-        let n = delay_w.len() as f64;
-        let mean_w = delay_w.iter().sum::<f64>() / n;
-        let mean_p = delay_p.iter().sum::<f64>() / n;
-        let mut num = 0.0;
-        let mut den = 0.0;
-        for (w, p) in delay_w.iter().zip(delay_p.iter()) {
-            num += (w - mean_w) * (p - mean_p);
-            den += (w - mean_w) * (w - mean_w);
-        }
+    let runs = pid_runs(&samples, &[], dt);
+    let names = PidNames { source: wanted.clone(), target: desired_name.clone(), actual: actual_name.clone(), reference: String::new() };
+    let Some(response) = pid_estimate(&names, &runs, rate, dt, false, PID_STEP_S, false) else {
+        return json!({
+            "ok": false,
+            "error": "too few samples",
+            "count": samples.len(),
+            "note": "frf needs two unbroken windows of 64 samples. A gap of more than five sample periods ends a window.",
+        });
+    };
+    let measured = response.not_measured.is_none();
+    let phases = pid_unwrap(response.bands.iter().map(PidBand::phase_deg));
+    let good: Vec<(&PidBand, f64)> = if measured {
+        response.bands.iter().zip(phases.iter().copied()).filter(|(band, _)| band.ok()).collect()
+    } else {
+        Vec::new()
+    };
+    let stride = good.len().div_ceil(16).max(1);
+    let bins: Vec<Value> = good.iter().step_by(stride).map(|(band, phase)| json!({
+        "hz": round1(band.hz),
+        "gain_db": round1(band.gain_db().clamp(-80.0, 40.0)),
+        "phase_deg": round1(*phase),
+        "coherence": round1(band.coherence),
+    })).collect();
+    let closed = if measured { pid_closed_loop(&response.bands) } else { PidClosedLoop::default() };
+    let slope: Vec<(f64, f64)> = good.iter()
+        .filter(|(band, _)| band.hz <= 20.0)
+        .map(|(band, phase)| (2.0 * std::f64::consts::PI * band.hz, phase.to_radians()))
+        .collect();
+    let group_delay = if slope.len() >= 3 {
+        let n = slope.len() as f64;
+        let mean_w = slope.iter().map(|row| row.0).sum::<f64>() / n;
+        let mean_p = slope.iter().map(|row| row.1).sum::<f64>() / n;
+        let num: f64 = slope.iter().map(|(w, p)| (w - mean_w) * (p - mean_p)).sum();
+        let den: f64 = slope.iter().map(|(w, _)| (w - mean_w) * (w - mean_w)).sum();
         (den > 1e-12).then(|| round3(-num / den))
     } else {
         None
@@ -1047,20 +982,25 @@ fn frf_bytes(bytes: &[u8], message: &str, field: &str, start_us: Option<u64>, en
         "count": samples.len(),
         "sample_hz": round1(rate),
         "nyquist_hz": round1(rate / 2.0),
-        "resolution_hz": round1(resolution),
-        "bandwidth_hz": bandwidth.map(|hz| json!(hz)).unwrap_or(Value::Null),
+        "resolution_hz": round3(1.0 / response.window_s),
+        "windows": response.windows,
+        "windows_total": response.windows_total,
+        "not_measured": response.not_measured,
+        "measured_to_hz": if measured { response.measured_to_hz.map(|hz| json!(round1(hz))).unwrap_or(Value::Null) } else { Value::Null },
+        "bandwidth_hz": closed.bandwidth_hz.map(|hz| json!(round1(hz))).unwrap_or(Value::Null),
         "group_delay_s": group_delay.map(|seconds| json!(seconds)).unwrap_or(Value::Null),
         "bins": bins,
         "tail_incomplete": incomplete,
         "note": concat!(
-            "This is the closed-loop ratio of actual to desired on the same row, for the interval that was passed. ",
+            "This is the closed-loop ratio of actual to desired on the same row, for the interval that was passed, by the method of log_pid_review. ",
+            "not_measured, when set, says why this interval holds no response: the command barely moved, or it followed the response instead of leading it, as a rate target does in a hover. Then bins is empty, and it is not a finding about the tune. ",
+            "bins holds only frequencies that are a measurement, up to measured_to_hz. windows of windows_total entered: a window where the command barely moved is left out. ",
             "gain_db above zero means actual was larger than desired at that frequency. ",
             "phase_deg is the phase of that same ratio. ",
             "Neither is a damping ratio, a phase margin, or a gain margin, and neither names a parameter. ",
-            "coherence near zero means the bin is not a measurement. ",
             "One bin does not describe the rest of the band. ",
-            "bandwidth_hz is where the gain falls 3 dB below the first coherent bin, or null if it does not. ",
-            "group_delay_s is the delay of this frequency ratio where coherence stays high, or null. ",
+            "bandwidth_hz is where the gain falls 3 dB below its low-frequency level, or null if it does not. ",
+            "group_delay_s is the delay of this frequency ratio over the measured bins up to 20 Hz, or null. ",
             "It is not lag_s. ",
             "lag_s is the time shift that lines the two columns up. ",
             "A frequency above nyquist_hz is not in this log.",

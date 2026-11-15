@@ -651,15 +651,27 @@ mod tests {
     fn frf_measures_a_delay() {
         let mut buf = Vec::new();
         push_fmt(&mut buf, 129, "RATE", "Qff", "TimeUS,RDes,R");
-        let tones = [2.0_f64, 5.0, 8.0, 12.0];
-        for i in 0..200 {
-            let sample = |n: f64| tones.iter().map(|hz| (2.0 * std::f64::consts::PI * hz * n / 100.0).sin()).sum::<f64>();
-            let desired = sample(i as f64);
-            let actual = if i < 5 { 0.0 } else { sample(i as f64 - 5.0) };
-            rate_row(&mut buf, i * 10_000, desired as f32, actual as f32);
+        // A command that holds for a pseudo-random time, and the same series five samples later.
+        let mut seed = 4321u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) as f64 / (1u32 << 24) as f64
+        };
+        let (mut level, mut hold) = (0.0f64, 0usize);
+        let mut past = std::collections::VecDeque::from(vec![0.0f64; 5]);
+        for i in 0..3000u64 {
+            if hold == 0 {
+                level = (next() - 0.5) * 60.0;
+                hold = 3 + (next() * 20.0) as usize;
+            }
+            hold -= 1;
+            past.push_back(level);
+            let actual = past.pop_front().unwrap();
+            rate_row(&mut buf, i * 10_000, level as f32, actual as f32);
         }
         let out = frf_bytes(&buf, "RATE", "R", None, None);
         assert_eq!(out["ok"], json!(true), "{out}");
+        assert!(out["not_measured"].is_null(), "{out}");
         let delay = out["group_delay_s"].as_f64().expect(&out.to_string());
         assert!((delay - 0.05).abs() < 0.03, "{out}");
         let bins = out["bins"].as_array().unwrap();
@@ -1220,16 +1232,209 @@ mod tests {
         assert_eq!(ok_res["coordinates"]["lon"], json!(30.52));
     }
 
+    /// A log recorded by scripts/sitl-test-logs.py: ArduCopter SITL flying with one known fault.
+    fn sitl_log(name: &str) -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dflog/testdata/sitl").join(format!("{name}.bin"));
+        std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}. Record it with scripts/sitl-test-logs.py", path.display()))
+    }
+
     #[test]
-    fn magfit_runs_on_real_iampm_log_if_present() {
-        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\2.2 Калібрування і розміщення сенсорів\2.2-A magfit-offsets (t137247)\01_p06_sample_log.bin");
-        if !path.exists() {
-            return;
+    #[ignore]
+    fn sitl_dump() {
+        let which = std::env::var("SITL_DUMP").unwrap_or_default();
+        let bytes = sitl_log(&which);
+        let res = match which.as_str() {
+            "motors" => motor_balance_bytes(&bytes, None, None),
+            "notch" => filter_review_bytes(&bytes, None, None, None),
+            "magfit" => magfit_bytes(&bytes, 1, "iron", "none", true, None, None, None, None),
+            "pid" | "plane_pid" | "sysid" => json!(["roll", "pitch", "yaw"].map(|a| pid_review_bytes(&bytes, Some(a), None, None))),
+            "healthy" => json!({
+                "audit": audit_bytes(&bytes),
+                "filter": filter_review_bytes(&bytes, None, None, None),
+                "motors": motor_balance_bytes(&bytes, None, None),
+            }),
+            _ => audit_bytes(&bytes),
+        };
+        println!("DUMP {}", serde_json::to_string_pretty(&res).unwrap());
+    }
+
+    #[test]
+    fn a_log_is_known_by_its_head_whatever_its_length() {
+        let log = sitl_log("ekf_lane");
+        // The board's file may end earlier or later than its listed size: the head stays the same.
+        assert_eq!(head_hash(&log), head_hash(&log[..HEAD_HASH_BYTES]));
+        assert_eq!(head_hash(&log), head_hash(&log[..log.len() - 1000]));
+        assert_ne!(head_hash(&log), head_hash(&sitl_log("gps_loss")));
+        assert_eq!(head_hash(&log).len(), 16);
+    }
+
+    #[test]
+    fn sitl_motor_balance_finds_the_weak_motor() {
+        // Motor 1 gives 8% less thrust (SIM_ENGINE_MUL 0.92 on motor 1): it runs harder than the rest.
+        let res = motor_balance_bytes(&sitl_log("motors"), None, None);
+        assert_eq!(res["ok"], json!(true), "{res}");
+        let motors = res["motors"].as_array().unwrap();
+        assert_eq!(motors.len(), 4, "{res}");
+        let diff = |i: usize| motors[i]["diff_pct"].as_f64().unwrap();
+        assert!(diff(0) > 1.5, "{res}");
+        assert!((1..4).all(|i| diff(i) < 0.0), "{res}");
+    }
+
+    #[test]
+    fn sitl_filter_review_moves_a_misplaced_throttle_notch() {
+        // Motor noise near 155 Hz at hover; the throttle notch is set at 60 Hz with REF 0.3.
+        let res = filter_review_bytes(&sitl_log("notch"), None, None, None);
+        assert_eq!(res["ok"], json!(true), "{res}");
+        let peak = res["primary_peak_hz"].as_f64().unwrap();
+        assert!((130.0..=185.0).contains(&peak), "{peak}");
+        assert!(res["tracked_notch_hz"].as_f64().unwrap() < 90.0, "{res}");
+        assert_eq!(res["harmonics"][0]["notched"], json!(false), "{}", res["harmonics"]);
+        let proposed = &res["proposed_params"];
+        assert!((proposed["INS_HNTCH_FREQ"].as_f64().unwrap() - peak).abs() <= 5.0, "{proposed}");
+        assert!((0.25..=0.5).contains(&proposed["INS_HNTCH_REF"].as_f64().unwrap()), "{proposed}");
+        // The post-filter batch (INS_LOG_BAT_OPT 4) is read as such, not guessed from its level.
+        assert!(res["measured_post_filter"]["attenuation_db"].as_f64().unwrap() > 0.0, "{res}");
+    }
+
+    #[test]
+    fn sitl_audit_reads_an_ekf_lane_switch() {
+        // An accelerometer bias on IMU 1 in flight moves EKF3 to the second lane.
+        let res = audit_bytes(&sitl_log("ekf_lane"));
+        assert_eq!(res["ok"], json!(true), "{res}");
+        let nav = &res["navigation"];
+        assert!(nav["ekf_lane_switches"].as_array().unwrap().iter().any(|row| row["new_core"] == json!(1)), "{nav}");
+        assert_eq!(nav["armed_min_fix_type"], json!(6), "{nav}");
+        assert_eq!(res["health"]["categories"]["ekf"]["status"], json!("WARN"), "{res}");
+        let modes: Vec<&str> = res["modes"].as_array().unwrap().iter().filter_map(|row| row["mode"].as_str()).collect();
+        assert_eq!(modes, ["GUIDED", "LOITER", "LAND"], "{res}");
+    }
+
+    #[test]
+    fn sitl_audit_reads_gps_loss_and_the_ekf_failsafe() {
+        // GPS switched off in Loiter: EKF failsafe, then Land without position.
+        let res = audit_bytes(&sitl_log("gps_loss"));
+        assert_eq!(res["ok"], json!(true), "{res}");
+        let nav = &res["navigation"];
+        assert!(nav["armed_min_fix_type"].as_u64().unwrap() < 3, "{nav}");
+        assert_eq!(nav["ekf_failsafes"], json!(1), "{nav}");
+        assert_eq!(res["health"]["categories"]["ekf"]["status"], json!("FAIL"), "{res}");
+        assert_ne!(res["health"]["categories"]["gps"]["status"], json!("PASS"), "{res}");
+        assert!(res["flight"]["last_disarmed_us"].as_u64().unwrap() > 0, "{res}");
+        assert_eq!(res["modes"].as_array().unwrap().last().unwrap()["mode"], json!("LAND"), "{res}");
+    }
+
+    #[test]
+    fn sitl_magfit_finds_the_compass_offsets() {
+        // SIM_MAG1_OFS 120, -80, 60 with COMPASS_OFS at 0. Z is the least covered axis in this flight.
+        let res = magfit_bytes(&sitl_log("magfit"), 1, "iron", "none", true, None, None, None, None);
+        assert_eq!(res["ok"], json!(true), "{res}");
+        let p = &res["params"];
+        let ofs = |axis: &str| p[format!("COMPASS_OFS_{axis}")].as_f64().unwrap();
+        assert!((ofs("X") - 120.0).abs() < 15.0, "{p}");
+        assert!((ofs("Y") + 80.0).abs() < 15.0, "{p}");
+        assert!((ofs("Z") - 60.0).abs() < 40.0, "{p}");
+        assert!(res["fit_error_mgauss"].as_f64().unwrap() < res["orig_error_mgauss"].as_f64().unwrap(), "{res}");
+        assert_eq!(res["orientation"]["matches"], json!(true), "{res}");
+    }
+
+    #[test]
+    fn sitl_pid_review_measures_roll_and_pitch_from_stick_doublets() {
+        let bytes = sitl_log("pid");
+        for axis in ["roll", "pitch"] {
+            let res = pid_review_bytes(&bytes, Some(axis), None, None);
+            assert_eq!(res["ok"], json!(true), "{res}");
+            assert_eq!(res["controller"], json!("copter"), "{res}");
+            let m = &res["metrics"];
+            assert!(res.get("step_response_unavailable").map_or(true, Value::is_null), "{axis}: {res}");
+            assert!((5.0..=200.0).contains(&m["rise_time_ms"].as_f64().unwrap()), "{axis}: {m}");
+            assert!(m["overshoot_pct"].is_number(), "{axis}: {m}");
+            assert!((0.0..=90.0).contains(&m["phase_margin_deg"].as_f64().unwrap()), "{axis}: {m}");
+            // A 100 Hz log measures up to 50 Hz; the phase may not cross -180° below that, and then
+            // there is no gain margin to report.
+            assert!(m["gain_margin_db"].as_f64().map_or(true, |gm| gm > 0.0), "{axis}: {m}");
         }
-        let bytes = std::fs::read(path).unwrap();
-        let res = magfit_bytes(&bytes, 1, "iron", "none", true, None, None, None, None);
-        println!("REAL LOG MAGFIT RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
-        assert_eq!(res["ok"], serde_json::json!(true), "{res}");
+        // Yaw follows its target slowly in these doublets: the result says so instead of a number.
+        let yaw = pid_review_bytes(&bytes, Some("yaw"), None, None);
+        assert!(yaw["metrics"]["rise_time_ms"].is_null() == yaw["step_response_unavailable"].is_string(), "{yaw}");
+    }
+
+    #[test]
+    fn sitl_healthy_flight_fires_no_rule() {
+        // The control case: a throttle notch on the motor line, failsafes set, nothing wrong.
+        let bytes = sitl_log("healthy");
+        let audit = audit_bytes(&bytes);
+        assert_eq!(audit["health"]["status"], json!("PASS"), "{audit}");
+        assert_eq!(audit["verdict"]["issues"], json!([]), "{audit}");
+        // EKF3's one in-flight yaw alignment after takeoff is not a reset.
+        assert!(audit["navigation"]["ekf_yaw_resets"].as_u64().unwrap() >= 1, "{}", audit["navigation"]);
+        assert!(audit["navigation"]["ekf_yaw_alignments"].as_u64().unwrap() >= 1, "{}", audit["navigation"]);
+        let filter = filter_review_bytes(&bytes, None, None, None);
+        assert_eq!(filter["needs_update"], json!(false), "{filter}");
+        assert!(filter["harmonics"].as_array().unwrap().iter().all(|row| row["notched"] == json!(true)), "{}", filter["harmonics"]);
+        let motors = motor_balance_bytes(&bytes, None, None);
+        assert_eq!(motors["issues"], json!([]), "{motors}");
+        assert_eq!(motors["balance"]["status"], json!("balanced"), "{motors}");
+    }
+
+    #[test]
+    fn sitl_audit_reads_heavy_vibration() {
+        // SIM_VIB_FREQ near 95 Hz with a 50 m/s/s amplitude on both IMUs.
+        let res = audit_bytes(&sitl_log("vibration"));
+        assert_ne!(res["health"]["categories"]["vibrations"]["status"], json!("PASS"), "{res}");
+        let peak = ["vibe_x_max", "vibe_y_max", "vibe_z_max"].iter().map(|k| res["vibrations"][*k].as_f64().unwrap()).fold(0.0, f64::max);
+        assert!(peak > 30.0, "{}", res["vibrations"]);
+    }
+
+    #[test]
+    fn sitl_audit_reads_a_motor_loss_as_lost_control() {
+        // Motor 1 stops in a hover. SITL levels the vehicle on the ground, so no crash check fires:
+        // the fall itself is ATT far from its desired attitude, and the motors at full output.
+        let res = audit_bytes(&sitl_log("crash"));
+        assert_eq!(res["health"]["categories"]["crash"]["status"], json!("FAIL"), "{res}");
+        assert_eq!(res["health"]["status"], json!("FAIL"), "{res}");
+        assert!(res["verdict"]["issues"].as_array().unwrap().iter().any(|i| i["message"].as_str().unwrap().starts_with("Attitude control lost")), "{res}");
+        assert!(res["motors"]["saturation_count"].as_u64().unwrap() > 0, "{res}");
+    }
+
+    #[test]
+    fn sitl_pid_review_reads_system_id_chirps() {
+        // ArduCopter's System ID mode on the roll, then the pitch angle input, from Stabilize: the
+        // indoor test. It gives what the stick doublets give.
+        let chirp = sitl_log("sysid");
+        let doublets = sitl_log("pid");
+        for axis in ["roll", "pitch"] {
+            let a = pid_review_bytes(&chirp, Some(axis), None, None);
+            let b = pid_review_bytes(&doublets, Some(axis), None, None);
+            let rise = |r: &Value| r["metrics"]["rise_time_ms"].as_f64().unwrap();
+            let pm = |r: &Value| r["metrics"]["phase_margin_deg"].as_f64().unwrap();
+            assert!((rise(&a) - rise(&b)).abs() < 5.0, "{axis}: {} vs {}", a["metrics"], b["metrics"]);
+            assert!((pm(&a) - pm(&b)).abs() < 8.0, "{axis}: {} vs {}", a["metrics"], b["metrics"]);
+            assert_eq!(a["logging"]["attitude_fast"], json!(true), "{}", a["logging"]);
+            assert_eq!(a["logging"]["pid"], json!(true), "{}", a["logging"]);
+            assert!(a["logging"]["firmware"].as_str().unwrap().starts_with("ArduCopter"), "{}", a["logging"]);
+            assert_eq!(a["logging"]["bits_set"], json!([0, 1, 2, 12]), "{}", a["logging"]);
+            assert_eq!(a["logging"]["gaps"], json!(0), "{}", a["logging"]);
+            // The two chirps: roll (SID_AXIS 1), then pitch (SID_AXIS 2), each with its bounds.
+            let runs = a["system_id_runs"].as_array().unwrap();
+            assert_eq!(runs.iter().map(|r| r["axis"].as_str().unwrap()).collect::<Vec<_>>(), ["roll", "pitch"], "{runs:?}");
+            assert!(runs.iter().all(|r| r["end_us"].as_u64().unwrap() > r["start_us"].as_u64().unwrap()), "{runs:?}");
+            // SITL's rate loops track cleanly: nothing holds as an oscillation.
+            assert!(a["diagnosis"].as_array().unwrap().iter().all(|d| !d.as_str().unwrap().contains("oscillation")), "{}", a["diagnosis"]);
+            assert!(a["logging"]["docs"]["LOG_BITMASK"].as_str().unwrap().contains("/copter/docs/parameters.html#log-bitmask"), "{}", a["logging"]);
+        }
+    }
+
+    #[test]
+    fn sitl_pid_review_reads_the_fixed_wing_loops() {
+        // ArduPlane in FBWA with aileron doublets; LOG_BITMASK bit 20 writes the loops at full rate.
+        let res = pid_review_bytes(&sitl_log("plane_pid"), Some("roll"), None, None);
+        assert_eq!(res["ok"], json!(true), "{res}");
+        assert_eq!(res["controller"], json!("fixed wing"), "{res}");
+        assert!((100.0..=600.0).contains(&res["metrics"]["rise_time_ms"].as_f64().unwrap()), "{}", res["metrics"]);
+        assert_eq!(res["logging"]["attitude_fullrate"], json!(true), "{}", res["logging"]);
+        assert!(res["logging"].get("pid").is_none(), "{}", res["logging"]);
+        assert!(res["logging"]["firmware"].as_str().unwrap().starts_with("ArduPlane"), "{}", res["logging"]);
+        assert!(res["logging"]["docs"]["LOG_BITMASK"].as_str().unwrap().contains("/plane/docs/"), "{}", res["logging"]);
     }
 
     #[test]
@@ -1263,72 +1468,354 @@ mod tests {
         assert!(raised.phase_delay_at_30hz_ms < plan_result(&three, &three_centres, 2000.0, &spectrum).phase_delay_at_30hz_ms);
     }
 
-    #[test]
-    fn filter_review_runs_on_real_iampm_log_if_present() {
-        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\4.3 Фільтри - harmonic notch і FFT\4.3-A harmonic-notch-throttle (t108668)\01_p07_2023-11-05 14-47-22.bin");
-        if !path.exists() {
-            return;
+    /// Target: pseudo-random holds of 0.1 to 0.4 s. Actual: `plant` applied to it sample by sample.
+    fn loop_log(message: &str, labels: &str, hz: f64, seconds: f64, mut plant: impl FnMut(f64) -> f64) -> Vec<u8> {
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 129, message, "Qff", labels);
+        let mut seed = 12345u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) as f64 / (1u32 << 24) as f64
+        };
+        let mut target = 0.0;
+        let mut hold = 0usize;
+        for i in 0..(hz * seconds) as usize {
+            if hold == 0 {
+                target = (next() - 0.5) * 120.0;
+                hold = (((0.1 + 0.3 * next()) * hz) as usize).max(1);
+            }
+            hold -= 1;
+            let actual = plant(target);
+            rate_row(&mut buf, 1_000_000 + (i as f64 * 1e6 / hz) as u64, target as f32, actual as f32);
         }
-        let bytes = std::fs::read(path).unwrap();
-        let res = filter_review_bytes(&bytes, None, None, None);
-        println!("REAL LOG FILTER REVIEW RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
-        assert_eq!(res["ok"], json!(true), "{res}");
-        assert!(res["primary_peak_hz"].as_f64().unwrap() > 30.0);
-        assert!(res["simulation"]["proposed_attenuation_db"].as_f64().unwrap() > 0.0);
+        buf
+    }
+
+    /// A second-order loop: natural frequency `wn_hz`, damping `zeta`.
+    fn second_order(hz: f64, wn_hz: f64, zeta: f64) -> impl FnMut(f64) -> f64 {
+        let (dt, wn) = (1.0 / hz, 2.0 * std::f64::consts::PI * wn_hz);
+        let (mut y, mut v) = (0.0f64, 0.0f64);
+        move |target| {
+            let out = y;
+            for _ in 0..8 {
+                let a = wn * wn * (target - y) - 2.0 * zeta * wn * v;
+                v += a * dt / 8.0;
+                y += v * dt / 8.0;
+            }
+            out
+        }
     }
 
     #[test]
-    fn audit_runs_on_real_iampm_log_if_present() {
-        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\5.2 GPS і EKF failsafe\5.2-B ekf-fs-tree-crash (t140808)\01_p01_2025-11-10 23-46-15.bin");
-        if !path.exists() {
-            return;
-        }
-        let bytes = std::fs::read(path).unwrap();
-        let res = audit_bytes(&bytes);
-        println!("REAL LOG AUDIT RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
-        assert_eq!(res["ok"], json!(true), "{res}");
-        assert!(res["verdict"].is_object());
-        assert!(res["health"].is_object());
-        assert!(res["health"]["score"].is_number());
+    fn pid_review_recovers_the_step_response_of_a_known_loop() {
+        // zeta 0.4 overshoots by exp(-pi*zeta/sqrt(1-zeta^2)) = 25.4 %.
+        let buf = loop_log("RATE", "TimeUS,RDes,R", 400.0, 60.0, second_order(400.0, 8.0, 0.4));
+        let out = pid_review_bytes(&buf, Some("roll"), None, None);
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert_eq!(out["source"], json!("RATE"));
+        let step = &out["step_response"];
+        let overshoot = step["overshoot_pct"].as_f64().unwrap();
+        assert!((19.0..=32.0).contains(&overshoot), "{step}");
+        assert!((step["steady_state"].as_f64().unwrap() - 1.0).abs() < 0.05, "{step}");
+        let rise = step["rise_time_ms"].as_f64().unwrap();
+        assert!((15.0..=40.0).contains(&rise), "{step}");
+        assert!(out["metrics"]["bandwidth_hz"].as_f64().unwrap() > 8.0, "{out}");
+        // RATE's desired is before the target filter: no open-loop margin is claimed.
+        assert!(out["metrics"]["phase_margin_deg"].is_null());
+        assert!(out["margins_unavailable"].as_str().unwrap().contains("PIDR"));
+        // No parameters in the log: none are reported, and none are proposed.
+        assert_eq!(out["current_params"], json!({}));
+        assert_eq!(out["proposed_params"], json!({}));
+
+        let damped = loop_log("RATE", "TimeUS,RDes,R", 400.0, 60.0, second_order(400.0, 8.0, 1.0));
+        let calm = pid_review_bytes(&damped, Some("roll"), None, None);
+        assert!(calm["step_response"]["overshoot_pct"].as_f64().unwrap() < 5.0, "{calm}");
     }
 
     #[test]
-    fn audit_detects_ekf_lane_switch_on_real_log_if_present() {
-        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\5.1 EKF\5.1-A ekf-lane-switch-baro (t91133)\01_p01_00000155.BIN");
-        if !path.exists() {
-            return;
-        }
-        let bytes = std::fs::read(path).unwrap();
-        let res = audit_bytes(&bytes);
-        println!("REAL LOG EKF LANE SWITCH AUDIT: {}", serde_json::to_string_pretty(&res["navigation"]).unwrap());
-        assert_eq!(res["ok"], json!(true));
-        assert!(res["navigation"]["ekf_lane_switches"].as_array().map(|a| a.len()).unwrap_or(0) > 0 || res["navigation"]["ekf_errors"].as_u64().unwrap_or(0) > 0);
+    fn pid_review_reads_margins_from_the_pid_message() {
+        // Open loop K/s with a delay of four samples: crossover at 5 Hz.
+        let (hz, k) = (400.0, 2.0 * std::f64::consts::PI * 5.0);
+        let mut actual = 0.0f64;
+        let mut errors = std::collections::VecDeque::from(vec![0.0f64; 4]);
+        let buf = loop_log("PIDR", "TimeUS,Tar,Act", hz, 90.0, move |target| {
+            let out = actual;
+            errors.push_back(target - actual);
+            actual += k * errors.pop_front().unwrap() / hz;
+            out
+        });
+        let out = pid_review_bytes(&buf, Some("roll"), None, None);
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert_eq!(out["source"], json!("PIDR"));
+        assert!(out["margins_unavailable"].is_null(), "{out}");
+        let m = &out["metrics"];
+        let crossover = m["gain_crossover_hz"].as_f64().unwrap();
+        assert!((4.0..=6.0).contains(&crossover), "{m}");
+        // 90 degrees less the delay at 5 Hz: about 70.
+        let pm = m["phase_margin_deg"].as_f64().unwrap();
+        assert!((60.0..=80.0).contains(&pm), "{m}");
+        let gm = m["gain_margin_db"].as_f64().unwrap();
+        assert!((9.0..=17.0).contains(&gm), "{m}");
     }
 
     #[test]
-    fn motor_balance_runs_on_real_iampm_log_if_present() {
-        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\4.1 Тюнінг коптера\4.1-A autotune-failing-notch-first (t104302)\01_p01_Autotune test 2023-07-28 18-31-23.bin");
-        if !path.exists() {
-            return;
+    fn pid_review_does_not_invent_a_response_the_log_cannot_hold() {
+        let slow = loop_log("RATE", "TimeUS,RDes,R", 10.0, 120.0, second_order(10.0, 1.0, 0.7));
+        let out = pid_review_bytes(&slow, Some("roll"), None, None);
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert!(out["step_response"].is_null(), "{out}");
+        assert!(out["step_response_unavailable"].as_str().unwrap().contains("10 Hz"), "{out}");
+        assert!(out["metrics"]["overshoot_pct"].is_null());
+        assert_eq!(out["proposed_params"], json!({}));
+
+        // Actual is noise that ignores the target.
+        let mut seed = 7u32;
+        let deaf = loop_log("RATE", "TimeUS,RDes,R", 400.0, 30.0, move |_| {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            ((seed >> 8) as f64 / (1u32 << 24) as f64 - 0.5) * 40.0
+        });
+        let out = pid_review_bytes(&deaf, Some("roll"), None, None);
+        assert!(out["step_response"].is_null(), "{out}");
+
+        let short = loop_log("RATE", "TimeUS,RDes,R", 400.0, 0.5, second_order(400.0, 8.0, 0.4));
+        assert_eq!(pid_review_bytes(&short, Some("roll"), None, None)["ok"], json!(false));
+    }
+
+    /// An angle loop around the rate loop, with a disturbance on the rate. `stick` false is a hover:
+    /// the desired angle stays at zero and the rate target only reacts to the disturbance.
+    fn outer_loop_log(stick: bool) -> Vec<u8> {
+        let hz = 400.0;
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 129, "RATE", "Qff", "TimeUS,RDes,R");
+        push_fmt(&mut buf, 130, "ATT", "Qf", "TimeUS,DesRoll");
+        let mut seed = 99u32;
+        let mut next = || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) as f64 / (1u32 << 24) as f64
+        };
+        let mut plant = second_order(hz, 8.0, 0.4);
+        let (mut desired, mut angle, mut gust, mut hold) = (0.0f64, 0.0f64, 0.0f64, 0usize);
+        for i in 0..(hz * 90.0) as usize {
+            if stick && hold == 0 {
+                desired = (next() - 0.5) * 40.0;
+                hold = ((0.3 + 0.7 * next()) * hz) as usize;
+            }
+            hold = hold.saturating_sub(1);
+            let target = 6.0 * (desired - angle);
+            gust = 0.97 * gust + (next() - 0.5) * 6.0;
+            let actual = plant(target) + gust;
+            angle += actual / hz;
+            let us = 1_000_000 + (i as f64 * 1e6 / hz) as u64;
+            rate_row(&mut buf, us, target as f32, actual as f32);
+            buf.extend_from_slice(&[HEAD1, HEAD2, 130]);
+            buf.extend_from_slice(&(us + 20).to_le_bytes());
+            buf.extend_from_slice(&(desired as f32).to_le_bytes());
         }
-        let bytes = std::fs::read(path).unwrap();
-        let res = motor_balance_bytes(&bytes, None, None);
-        println!("REAL LOG MOTOR BALANCE RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
-        assert_eq!(res["ok"], json!(true), "{res}");
-        assert!(res["motors"].as_array().unwrap().len() >= 4);
+        buf
     }
 
     #[test]
-    fn pid_review_runs_on_real_iampm_log_if_present() {
-        let path = std::path::Path::new(r"D:\PROJ\IAMPM\V2\4.1 Тюнінг коптера\4.1-A autotune-failing-notch-first (t104302)\01_p01_Autotune test 2023-07-28 18-31-23.bin");
-        if !path.exists() {
-            return;
+    fn pid_review_ties_the_estimate_to_the_desired_angle() {
+        let out = pid_review_bytes(&outer_loop_log(true), Some("roll"), None, None);
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert_eq!(out["reference"], json!("ATT.DesRoll"));
+        assert!(out["not_measured"].is_null(), "{out}");
+        let step = &out["step_response"];
+        let overshoot = step["overshoot_pct"].as_f64().unwrap();
+        assert!((17.0..=34.0).contains(&overshoot), "{step}");
+        assert!((step["steady_state"].as_f64().unwrap() - 1.0).abs() < 0.08, "{step}");
+
+        // A hover: the target only follows the vehicle. Nothing is measured, and nothing is proposed.
+        let hover = pid_review_bytes(&outer_loop_log(false), Some("roll"), None, None);
+        assert_eq!(hover["ok"], json!(true), "{hover}");
+        assert!(hover["not_measured"].is_string(), "{hover}");
+        assert!(hover["step_response"].is_null(), "{hover}");
+        assert!(hover["metrics"]["bandwidth_hz"].is_null(), "{hover}");
+        assert_eq!(hover["frequency_response"], json!([]));
+        assert_eq!(hover["proposed_params"], json!({}));
+        assert_eq!(pid_picture_bytes(&outer_loop_log(false), &json!({ "axis": "roll" }))["ok"], json!(false));
+    }
+
+    #[test]
+    fn pid_review_rejects_a_target_that_follows_the_vehicle() {
+        // The same hover without ATT: the target itself is the reference, and the estimate is the
+        // outer loop backwards, gain rising with frequency at -90°.
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 129, "RATE", "Qff", "TimeUS,RDes,R");
+        let hz = 400.0;
+        let mut seed = 5u32;
+        let (mut angle, mut gust) = (0.0f64, 0.0f64);
+        let mut plant = second_order(hz, 8.0, 0.4);
+        for i in 0..(hz * 60.0) as usize {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            gust = 0.97 * gust + ((seed >> 8) as f64 / (1u32 << 24) as f64 - 0.5) * 6.0;
+            let target = -6.0 * angle;
+            let actual = plant(target) + gust;
+            angle += actual / hz;
+            rate_row(&mut buf, 1_000_000 + (i as f64 * 1e6 / hz) as u64, target as f32, actual as f32);
         }
-        let bytes = std::fs::read(path).unwrap();
-        let res = pid_review_bytes(&bytes, Some("roll"), None, None);
-        println!("REAL LOG PID REVIEW RESULT: {}", serde_json::to_string_pretty(&res).unwrap());
-        assert_eq!(res["ok"], json!(true), "{res}");
-        assert!(res["metrics"]["phase_margin_deg"].as_f64().unwrap() > 0.0);
+        let out = pid_review_bytes(&buf, Some("roll"), None, None);
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert!(out["reference"].is_null());
+        assert!(out["not_measured"].is_string(), "{out}");
+        assert!(out["step_response"].is_null(), "{out}");
+        assert_eq!(out["proposed_params"], json!({}));
+
+        // frf is the same estimate, and it gives the same answer for the same pair.
+        let frf = frf_bytes(&buf, "RATE", "R", None, None);
+        assert_eq!(frf["ok"], json!(true), "{frf}");
+        assert!(frf["not_measured"].is_string(), "{frf}");
+        assert_eq!(frf["bins"], json!([]));
+        assert!(frf["bandwidth_hz"].is_null());
+    }
+
+    fn pid_parm(buf: &mut Vec<u8>, name: &str, value: f32) {
+        buf.extend_from_slice(&[HEAD1, HEAD2, 140]);
+        buf.extend_from_slice(&1000u64.to_le_bytes());
+        let mut bytes = [0u8; 16];
+        bytes[..name.len()].copy_from_slice(name.as_bytes());
+        buf.extend_from_slice(&bytes);
+        buf.extend_from_slice(&value.to_le_bytes());
+    }
+
+    #[test]
+    fn pid_review_reads_the_loops_of_a_plane_and_a_quadplane() {
+        // A plane names its roll rate gains RLL_RATE_ and logs the loop in PIDR.
+        let mut plane = loop_log("PIDR", "TimeUS,Tar,Act", 50.0, 240.0, second_order(50.0, 2.0, 0.5));
+        push_fmt(&mut plane, 140, "PARM", "QNf", "TimeUS,Name,Value");
+        pid_parm(&mut plane, "RLL_RATE_P", 0.08);
+        pid_parm(&mut plane, "RLL_RATE_FF", 0.35);
+        let out = pid_review_bytes(&plane, Some("roll"), None, None);
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert_eq!(out["controller"], json!("fixed wing"));
+        assert!(out["current_params"]["RLL_RATE_P"].is_number(), "{out}");
+        assert!(out["current_params"].get("ATC_RAT_RLL_P").is_none());
+        // zeta 0.5 overshoots by 16 %. The step is read over one second on a wing.
+        let step = &out["step_response"];
+        assert!((8.0..=25.0).contains(&step["overshoot_pct"].as_f64().unwrap()), "{out}");
+        assert!(step["points"].as_array().unwrap().last().unwrap()["t_ms"].as_f64().unwrap() > 900.0, "{step}");
+        // No gain change is proposed for a fixed-wing loop, and no open-loop margin is claimed.
+        assert_eq!(out["proposed_params"], json!({}));
+        assert!(out["metrics"]["phase_margin_deg"].is_null());
+
+        // A quadplane holds both. Its VTOL loop is in PIQR, with the Q_A_RAT_ gains.
+        let mut quad = loop_log("PIQR", "TimeUS,Tar,Act", 400.0, 60.0, second_order(400.0, 8.0, 0.4));
+        push_fmt(&mut quad, 140, "PARM", "QNf", "TimeUS,Name,Value");
+        pid_parm(&mut quad, "RLL_RATE_P", 0.08);
+        pid_parm(&mut quad, "Q_A_RAT_RLL_P", 0.12);
+        let out = pid_review_bytes(&quad, Some("roll"), None, None);
+        assert_eq!(out["ok"], json!(true), "{out}");
+        assert_eq!(out["controller"], json!("quadplane VTOL"));
+        assert_eq!(out["source"], json!("PIQR"));
+        assert!(out["current_params"]["Q_A_RAT_RLL_P"].is_number(), "{out}");
+    }
+
+    #[test]
+    fn filter_review_answers_when_the_log_has_no_gyro_batches() {
+        // RATE alone, with a row count that is not a power of two. This once stopped the tool.
+        let mut slow = Vec::new();
+        push_fmt(&mut slow, 129, "RATE", "Qff", "TimeUS,RDes,R");
+        for i in 0..100u64 {
+            rate_row(&mut slow, 1_000_000 + i * 100_000, 0.0, (i as f32 * 0.7).sin());
+        }
+        let out = filter_review_bytes(&slow, None, None, None);
+        assert_eq!(out["ok"], json!(false), "{out}");
+        assert!(out["error"].as_str().unwrap().contains("10 Hz"), "{out}");
+
+        // RATE at 400 Hz with an 80 Hz line is enough for a spectrum.
+        let mut fast = Vec::new();
+        push_fmt(&mut fast, 129, "RATE", "Qff", "TimeUS,RDes,R");
+        for i in 0..1000u64 {
+            let t = i as f64 / 400.0;
+            rate_row(&mut fast, 1_000_000 + i * 2_500, 0.0, (2.0 * std::f64::consts::PI * 80.0 * t).sin() as f32);
+        }
+        let out = filter_review_bytes(&fast, None, None, None);
+        assert_eq!(out["ok"], json!(true), "{out}");
+
+        let empty = filter_review_bytes(&slow[..89], None, None, None);
+        assert_eq!(empty["ok"], json!(false), "{empty}");
+    }
+
+    #[test]
+    fn pid_response_charts_are_step_and_bode() {
+        let buf = loop_log("RATE", "TimeUS,RDes,R", 400.0, 60.0, second_order(400.0, 8.0, 0.4));
+        let step = pid_picture_bytes(&buf, &json!({ "axis": "roll", "slug": "roll-step" }));
+        assert_eq!(step["ok"], json!(true), "{step}");
+        assert_eq!(step["chart"]["x_label"], json!("ms"));
+        assert_eq!(step["chart"]["slug"], json!("roll-step"));
+        let names: Vec<&str> = step["chart"]["axes"][0]["lines"].as_array().unwrap().iter().map(|line| line["name"].as_str().unwrap()).collect();
+        assert_eq!(&names[..5], &["target −10 %", "target +10 %", "roll −1σ", "roll +1σ", "target"]);
+        // The legend carries the overshoot and the rise time.
+        assert!(names[5].starts_with("roll · +") && names[5].ends_with(" ms"), "{names:?}");
+        let lines = step["chart"]["axes"][0]["lines"].as_array().unwrap();
+        assert_eq!(lines[1]["fill"], json!(true));
+        assert_eq!(lines[3]["quiet"], json!(true));
+        assert_eq!(step["axes"][0]["established"], json!(true), "{step}");
+        assert!(lines[5].get("dash").is_none());
+        assert!(step["axes"][0]["overshoot_pct"].as_f64().unwrap() > 15.0, "{step}");
+
+        // RATE in this log has no pitch or yaw columns: all draws roll and names the rest.
+        let all = pid_picture_bytes(&buf, &json!({}));
+        assert_eq!(all["axes"].as_array().unwrap().len(), 1, "{all}");
+        assert_eq!(all["missing"].as_array().unwrap().len(), 2, "{all}");
+
+        let bode = pid_picture_bytes(&buf, &json!({ "kind": "bode", "axis": "roll" }));
+        assert_eq!(bode["ok"], json!(true), "{bode}");
+        assert_eq!(bode["chart"]["x_log"], json!(true));
+        assert_eq!(bode["chart"]["stack"], json!(true));
+        let gain = bode["chart"]["axes"][0]["lines"].as_array().unwrap();
+        assert_eq!(gain[2]["name"], json!("target"));
+        // zeta 0.4 has a resonance of about +2.7 dB below its natural frequency of 8 Hz.
+        let label = gain[3]["name"].as_str().unwrap();
+        assert!(label.starts_with("roll · peak +") && label.contains(" · −3 dB at "), "{label}");
+        let peak = bode["axes"][0]["peak_gain_db"].as_f64().unwrap();
+        assert!((1.5..=4.0).contains(&peak), "{bode}");
+        assert_eq!(bode["chart"]["axes"][1]["lines"][0]["name"], json!("roll phase"));
+        assert_eq!(bode["chart"]["axes"][1]["dtick"], json!(45));
+        // The line stops where the measurement stops.
+        let x = gain[3]["x"].as_array().unwrap();
+        assert!(gain[3]["y"].as_array().unwrap().last().unwrap().is_number());
+        assert_eq!(gain[0]["x"][1], x[x.len() - 1]);
+        assert!(bode["axes"][0]["bandwidth_hz"].as_f64().unwrap() > 8.0, "{bode}");
+
+        assert_eq!(pid_picture_bytes(&buf, &json!({ "kind": "nyquist" }))["ok"], json!(false));
+        assert_eq!(pid_picture_bytes(&buf, &json!({ "axis": "pitch" }))["ok"], json!(false));
+    }
+
+    #[test]
+    fn pid_review_runs_on_real_logs_if_present() {
+        // ARDULOOPS_PID_LOGS names a folder of folders of .bin files. Without it the test does nothing.
+        let Some(dir) = std::env::var_os("ARDULOOPS_PID_LOGS") else { return };
+        let Ok(cases) = std::fs::read_dir(dir) else { return };
+        for case in cases.flatten() {
+            let Ok(files) = std::fs::read_dir(case.path()) else { continue };
+            for file in files.flatten() {
+                let path = file.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("bin") {
+                    continue;
+                }
+                let bytes = std::fs::read(&path).unwrap();
+                for axis in ["roll", "pitch", "yaw"] {
+                    // ARDULOOPS_PID_START_S and ARDULOOPS_PID_END_S bound the interval, in seconds of TimeUS.
+                    let bound = |var: &str| std::env::var(var).ok().and_then(|v| v.parse::<f64>().ok()).map(|s| (s * 1e6) as u64);
+                    let res = pid_review_bytes(&bytes, Some(axis), bound("ARDULOOPS_PID_START_S"), bound("ARDULOOPS_PID_END_S"));
+                    let mut brief = res.clone();
+                    if let Some(obj) = brief.as_object_mut() {
+                        for key in ["note", "suggested_chart", "key_intervals", "best_step_interval", "frequency_response"] {
+                            obj.remove(key);
+                        }
+                    }
+                    if let Some(step) = brief.get_mut("step_response").and_then(Value::as_object_mut) {
+                        step.remove("points");
+                    }
+                    println!("REAL {} {axis}: {brief}", path.file_name().unwrap().to_string_lossy());
+                    // A margin is either measured or null, never a placeholder.
+                    if res["ok"] == json!(true) && res["source"] == json!("RATE") {
+                        assert!(res["metrics"]["phase_margin_deg"].is_null(), "{res}");
+                    }
+                }
+            }
+        }
     }
 
     fn arm_row(buf: &mut Vec<u8>, us: u64, armed: u8) {
@@ -1351,6 +1838,30 @@ mod tests {
         buf.extend_from_slice(&((lng * 1e7).round() as i32).to_le_bytes());
         buf.extend_from_slice(&week.to_le_bytes());
         buf.extend_from_slice(&1000u32.to_le_bytes());
+    }
+
+    #[test]
+    fn audit_reads_the_board_voltage_from_powr() {
+        // Without POWR the board voltage is not measured, and no value stands in for it.
+        let bare = audit_bytes(&flight_log());
+        assert_eq!(bare["ok"], json!(true), "{bare}");
+        assert!(bare["power"]["vcc_min"].is_null(), "{bare}");
+        assert_eq!(bare["power"]["status"], json!("not measured"));
+
+        let mut buf = flight_log();
+        push_fmt(&mut buf, 60, "POWR", "QffHHB", "TimeUS,Vcc,VServo,Flags,AccFlags,Safety");
+        for (i, vcc) in [5.02f32, 4.98, 4.52, 5.0].into_iter().enumerate() {
+            buf.extend_from_slice(&[HEAD1, HEAD2, 60]);
+            buf.extend_from_slice(&(2_000_000 + i as u64 * 100_000).to_le_bytes());
+            buf.extend_from_slice(&vcc.to_le_bytes());
+            buf.extend_from_slice(&5.0f32.to_le_bytes());
+            buf.extend_from_slice(&[0, 0, 0, 0, 0]);
+        }
+        let out = audit_bytes(&buf);
+        assert_eq!(out["power"]["vcc_min"], json!(4.52), "{out}");
+        assert_eq!(out["power"]["status"], json!("critical"));
+        let issues = out["verdict"]["issues"].as_array().unwrap();
+        assert!(issues.iter().any(|issue| issue["category"] == json!("power") && issue["severity"] == json!("critical")), "{out}");
     }
 
     fn flight_log() -> Vec<u8> {

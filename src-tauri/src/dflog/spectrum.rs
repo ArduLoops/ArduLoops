@@ -119,7 +119,7 @@ fn scan_gyro(bytes: &[u8]) -> GyroScan {
     let mut notch = Vec::new();
     let mut parms: BTreeMap<String, f64> = BTreeMap::new();
     let mut incomplete = false;
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &["ISBH", "ISBD", "CTUN", "ESC", "PARM", "FTNS"], |fmt, _, values| {
         if fmt.name == "ISBH" {
             let Some(n) = field_u64(fmt, values, "N") else { return };
             let type_ = field_u64(fmt, values, "type").unwrap_or(255);
@@ -155,7 +155,7 @@ fn scan_gyro(bytes: &[u8]) -> GyroScan {
             }
         } else if fmt.name == "PARM" {
             if let (Some(name), Some(value)) = (field_str(fmt, values, "Name"), field_f64(fmt, values, "Value")) {
-                if value.is_finite() && (name.starts_with("INS_HNTCH_") || name.starts_with("INS_HNTC2_") || name == "INS_GYRO_FILTER") {
+                if value.is_finite() && (name.starts_with("INS_HNTCH_") || name.starts_with("INS_HNTC2_") || name == "INS_GYRO_FILTER" || name == "INS_LOG_BAT_OPT" || (name.starts_with("INS_GYR") && name.ends_with("_ID"))) {
                     parms.insert(name, value);
                 }
             }
@@ -257,16 +257,32 @@ fn scan_gyro(bytes: &[u8]) -> GyroScan {
     GyroScan { groups, throttle, rpm, notch, parms }
 }
 
-fn classify_captures(groups: &BTreeMap<u64, GyroGroup>) -> Vec<Value> {
+fn classify_captures(groups: &BTreeMap<u64, GyroGroup>, parms: &BTreeMap<String, f64>) -> Vec<Value> {
     let mut views: Vec<Value> = groups.values().filter(|group| group.used > 0).map(gyro_group_view).collect();
     if views.is_empty() {
         return views;
     }
-    views.sort_by(|a, b| {
-        b["fundamental_amplitude"].as_f64().unwrap_or(0.0)
-            .partial_cmp(&a["fundamental_amplitude"].as_f64().unwrap_or(0.0))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // INS_LOG_BAT_OPT bit 2: each gyro is logged before and after the filters, the filtered one as
+    // instance + gyro count. Then the post-filter capture is known, whatever the filters did to it.
+    let both = parms.get("INS_LOG_BAT_OPT").is_some_and(|v| (*v as u64) & 4 != 0);
+    // The gyro count is the number of gyros with an ID; without those parameters, half the instances.
+    let ids = ["INS_GYR_ID", "INS_GYR2_ID", "INS_GYR3_ID"].iter().filter(|name| parms.get(**name).is_some_and(|id| *id != 0.0)).count() as u64;
+    let count = if ids > 0 { ids } else { groups.keys().max().map(|top| (top + 1) / 2).unwrap_or(0) };
+    let used = |id: u64| groups.get(&id).is_some_and(|group| group.used > 0);
+    let paired = both && count > 0 && used(0) && used(count);
+    if paired {
+        views.sort_by_key(|view| match view["instance"].as_u64().unwrap_or(0) {
+            0 => 0,
+            id if id == count => 1,
+            id => 2 + id,
+        });
+    } else {
+        views.sort_by(|a, b| {
+            b["fundamental_amplitude"].as_f64().unwrap_or(0.0)
+                .partial_cmp(&a["fundamental_amplitude"].as_f64().unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
     let reference_amp = views[0]["fundamental_amplitude"].as_f64().unwrap_or(0.0);
     let reference_bin = views[0]["fundamental_bin"].as_u64().unwrap_or(0) as usize;
     let reference_hz = views[0]["fundamental_hz"].as_f64().unwrap_or(0.0);
@@ -287,7 +303,12 @@ fn classify_captures(groups: &BTreeMap<u64, GyroGroup>) -> Vec<Value> {
         }).collect();
         view["harmonic_attenuation_db"] = json!(rows);
         let other_hz = view["fundamental_hz"].as_f64().unwrap_or(0.0);
-        if depth >= 10.0 && (other_hz - reference_hz).abs() <= 15.0 {
+        let is_post = if paired {
+            view["instance"].as_u64() == Some(count)
+        } else {
+            depth >= 10.0 && (other_hz - reference_hz).abs() <= 15.0
+        };
+        if is_post {
             view["capture"] = json!("post-filter");
         }
     }
@@ -298,7 +319,7 @@ fn classify_captures(groups: &BTreeMap<u64, GyroGroup>) -> Vec<Value> {
 }
 
 fn publish_fft(mut scan: GyroScan) -> Value {
-    let views = classify_captures(&scan.groups);
+    let views = classify_captures(&scan.groups, &scan.parms);
     if views.is_empty() {
         return json!({ "ok": false, "error": "no gyro batch in this log" });
     }
@@ -819,7 +840,7 @@ pub fn gyro_picture(id: &str, kind: &str, spec: &Value) -> Value {
 fn picture_bytes(bytes: &[u8], kind: &str, spec: &Value) -> Value {
     let mut scan = scan_gyro(bytes);
     scan.notch.sort_by_key(|row| row.0);
-    let views = classify_captures(&scan.groups);
+    let views = classify_captures(&scan.groups, &scan.parms);
     if views.is_empty() {
         return json!({ "ok": false, "error": "no gyro batch in this log" });
     }

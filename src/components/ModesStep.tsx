@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
-import { NEEDS_TEXT, SLOT_BANDS, canFly, modeSlot, modesFor, sources, type Mode } from "../lib/flightModes";
+import { NEEDS_TEXT, SLOT_BANDS, canFly, modeSlot, sources, useModes, type Mode } from "../lib/flightModes";
 import { STICKS, channelOf } from "../lib/radio";
 import { noteUi, sameParam, writeParam } from "../mav/cmd";
 import { getLatest, getSetupSnapshot, getSnapshot, subscribe } from "../mav/store";
@@ -53,14 +53,14 @@ export function ModesStep({ frame }: { frame: "copter" | "plane" }) {
   const params = sample.params || {};
   const draft = useParamDraft(params);
   const [wizard, setWizard] = useState(false);
-  const list = modesFor(frame);
+  const list = useModes(frame);
   const ch = Math.round(pnum(params, "FLTMODE_CH") ?? 5);
   const pwm = live.rc?.[ch - 1];
   const slot = okPwm(pwm) ? modeSlot(pwm) : null;
   const src = sources(params);
   const values = Array.from({ length: 6 }, (_, i) => draft.value(`FLTMODE${i + 1}`));
   const modeOf = (v: number | null) => (v == null ? undefined : list.find((m) => m.n === Math.round(v)));
-  const names = values.map((v) => (v == null ? "—" : t(modeOf(v)?.name ?? "Mode {n}", { n: Math.round(v) })));
+  const names = values.map((v) => (v == null ? "—" : (modeOf(v)?.name ?? t("Mode {n}", { n: Math.round(v) }))));
   const cannot = values.map((v, i) => [i, modeOf(v)] as [number, Mode | undefined]).filter(([, m]) => !canFly(m, src));
   const safe = values.filter((v) => modeOf(v)?.needs === "none").length;
   const ready = live.ok && !live.armed;
@@ -108,7 +108,7 @@ export function ModesStep({ frame }: { frame: "copter" | "plane" }) {
               <span className="mono mw-dim">{i === 0 ? `< ${SLOT_BANDS[0][1] + 1}` : i === 5 ? `${SLOT_BANDS[5][0]}+` : `${SLOT_BANDS[i][0]}–${SLOT_BANDS[i][1]}`}</span>
               {v == null ? <span>—</span> : (
                 <select value={Math.round(v)} onChange={(e) => draft.set(`FLTMODE${i + 1}`, Number(e.target.value))}>
-                  {options.map((x) => <option key={x.n} value={x.n}>{t(x.name)}</option>)}
+                  {options.map((x) => <option key={x.n} value={x.n}>{x.name}</option>)}
                 </select>
               )}
               <span className={ok ? "mw-dim" : "md-warn"}>{m ? t(ok ? NEEDS_TEXT[m.needs] : `${NEEDS_TEXT[m.needs]} · not on this vehicle`) : ""}</span>
@@ -131,7 +131,7 @@ export function ModeSwitchWizard({ frame, onClose, fromAssistant }: { frame: "co
   const sample = useSyncExternalStore(subscribe, getLatest, getLatest);
   const params = sample.params ?? {};
   const rc = sample.rc ?? [];
-  const list = modesFor(frame);
+  const list = useModes(frame);
   const src = sources(params);
   const stored = Math.round(pnum(params, "FLTMODE_CH") ?? 5);
   const sticks = useMemo(() => new Set(STICKS.map((s) => channelOf(params, s.key))), [params]);
@@ -166,7 +166,7 @@ export function ModeSwitchWizard({ frame, onClose, fromAssistant }: { frame: "co
   const ch = pick ?? found ?? stored;
   const pwm = rc[ch - 1];
   const slot = okPwm(pwm) ? modeSlot(pwm) : null;
-  const name = (v: number | null) => (v == null ? "—" : t(list.find((m) => m.n === v)?.name ?? "Mode {n}", { n: v }));
+  const name = (v: number | null) => (v == null ? "—" : (list.find((m) => m.n === v)?.name ?? t("Mode {n}", { n: v })));
   const leave = () => onClose({ outcome: phase === "done" ? "completed" : "cancelled", measures: { FLTMODE_CH: ch, ...Object.fromEntries(modes.map((v, i) => [`FLTMODE${i + 1}`, v])) } });
 
   async function write() {
@@ -226,7 +226,7 @@ export function ModeSwitchWizard({ frame, onClose, fromAssistant }: { frame: "co
                 <b className="cps-n">{i + 1}</b>
                 <select value={v ?? ""} onChange={(e) => setModes((all) => all.map((x, j) => (j === i ? Number(e.target.value) : x)))}>
                   {v == null ? <option value="">—</option> : null}
-                  {list.map((x) => <option key={x.n} value={x.n}>{t(x.name)}</option>)}
+                  {list.map((x) => <option key={x.n} value={x.n}>{x.name}</option>)}
                 </select>
                 <span className={canFly(m, src) ? "mw-dim" : "md-warn"}>{m ? t(NEEDS_TEXT[m.needs]) : ""}</span>
               </label>

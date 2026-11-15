@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useT } from "../i18n/i18n";
-import { openAssistantChat } from "../lib/assistantAsk";
-import { fetchBoardChats, fetchBoardParams, fetchBoards, type BoardChat, type BoardRow, type SavedParams } from "../lib/boards";
+import { fetchBoardParams, fetchBoards, type BoardRow, type SavedParams } from "../lib/boards";
+import { BoardChats } from "./BoardChats";
 import { BoardCloudDialog, boardCloudLabel } from "./BoardCloud";
 import { markShape, splitNote } from "../lib/vehicleHeader";
 import { hasProfile, profileChips, readProfile } from "../lib/vehicleProfile";
@@ -36,7 +36,6 @@ export function BoardView({ boardKey, onClose }: { boardKey: string; onClose: ()
   const [tab, setTab] = useState<Tab>("params");
   const [saved, setSaved] = useState<SavedParams | null>(null);
   const [cloudOpen, setCloudOpen] = useState(false);
-  const [chats, setChats] = useState<BoardChat[]>([]);
   const [needle, setNeedle] = useState("");
   const [editing, setEditing] = useState<"name" | "note" | null>(null);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -55,10 +54,8 @@ export function BoardView({ boardKey, onClose }: { boardKey: string; onClose: ()
   }, [boardKey]);
   useEffect(() => {
     setSaved(null);
-    setChats([]);
     reload();
     loadParams();
-    void fetchBoardChats(boardKey).then(setChats).catch(() => setChats([]));
   }, [boardKey, reload, loadParams]);
 
   const names = useMemo(() => {
@@ -180,14 +177,7 @@ export function BoardView({ boardKey, onClose }: { boardKey: string; onClose: ()
         </div>
       ) : null}
       {tab === "chats" ? (
-        <div className="controller-pane bv-chats">
-          {chats.length === 0 ? <p className="bv-empty">{fromCloud ? t("Assistant chats stay on the device they were made on.") : t("No assistant chats for this board.")}</p> : chats.map((chat) => (
-            <button type="button" key={chat.id} className="bv-chat" onClick={() => openAssistantChat(chat.id)}>
-              <span>{chat.title}</span>
-              <small>{when(chat.updated_at)}</small>
-            </button>
-          ))}
-        </div>
+        <BoardChats boardKey={fromCloud ? "" : row.key} empty={fromCloud ? t("Assistant chats stay on the device they were made on.") : undefined} />
       ) : null}
       {cloudOpen ? (
         <BoardCloudDialog row={row} onClose={() => setCloudOpen(false)} onChanged={(removed) => {

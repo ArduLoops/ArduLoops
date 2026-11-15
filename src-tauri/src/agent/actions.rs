@@ -729,8 +729,30 @@ enum ChartSlot {
     Remove { known: bool },
 }
 
+/// Every tool the assistant calls goes through here: `run_tool`, with a panic inside the tool
+/// turned into its error result. Without this a tool that hits a log it did not expect leaves
+/// the turn with no result at all.
+fn run_tool_guarded(name: &str, args: &Value, sample: &Sample, c: &Connection, tx: &Sender<Cmd>, chat: &str, log_id: &str) -> Value {
+    guard_tool(|| run_tool(name, args, sample, c, tx, chat, log_id))
+}
+
+fn guard_tool(run: impl FnOnce() -> Value) -> Value {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+        Ok(value) => value,
+        Err(panic) => {
+            let detail = panic.downcast_ref::<String>().map(String::as_str).or_else(|| panic.downcast_ref::<&str>().copied()).unwrap_or("no detail");
+            json!({
+                "ok": false,
+                "error": "tool_failed",
+                "detail": detail,
+                "note": "This tool stopped on an internal error with these arguments. It is not a finding about the log or the vehicle. The same call fails the same way.",
+            })
+        }
+    }
+}
+
 fn draws_chart(name: &str) -> bool {
-    matches!(name, "show_chart" | "show_spectrum" | "show_spectrogram")
+    matches!(name, "show_chart" | "show_spectrum" | "show_spectrogram" | "show_pid_response")
 }
 
 fn chart_slug_arg(args: &Value) -> Option<String> {
@@ -873,7 +895,7 @@ fn run_batch(
                 let log_id = log_id.to_string();
                 handles.push(scope.spawn(move || {
                     let value = match conn() {
-                        Ok(conn) => fit_result(&name, run_tool(&name, &args, &sample, &conn, &tx, &chat, &log_id)),
+                        Ok(conn) => fit_result(&name, run_tool_guarded(&name, &args, &sample, &conn, &tx, &chat, &log_id)),
                         Err(error) => json!({ "ok": false, "error": error }),
                     };
                     (i, value)
@@ -894,7 +916,7 @@ fn run_batch(
         for &i in &fresh {
             let (name, args) = &planned[i];
             live_tool(name, args);
-            let mut value = fit_result(name, run_tool(name, args, sample, c, tx, chat, log_id));
+            let mut value = fit_result(name, run_tool_guarded(name, args, sample, c, tx, chat, log_id));
             stamp_live(name, &mut value, live_on);
             seen.insert(call_key(name, args), value.clone());
             record_tool(c, chat, name, args, &value, cost_per_call);

@@ -301,6 +301,7 @@ fn apply_cmd(
                 last_data: now,
                 last_request: now,
                 requested: (0, 0),
+                tail_seen: false,
                 peek_head,
                 peek_tail,
             });
@@ -352,6 +353,7 @@ fn apply_cmd(
                 last_data: now,
                 last_request: now,
                 requested: (0, 0),
+                tail_seen: false,
                 peek_head: 0,
                 peek_tail: 0,
             });
@@ -1087,14 +1089,15 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             st.sample.armed = base_mode.contains(MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED);
         }
         MavMessage::ATTITUDE(ATTITUDE_DATA {
+            time_boot_ms,
             roll,
             pitch,
             yaw,
             rollspeed,
             pitchspeed,
             yawspeed,
-            ..
         }) => {
+            note_boot_time(st, time_boot_ms);
             st.sample.roll = (roll as f64).to_degrees();
             st.sample.pitch = (pitch as f64).to_degrees();
             st.sample.yaw = (yaw as f64).to_degrees();
@@ -1361,6 +1364,10 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                     active.received_chunks += 1;
                 }
             }
+            let (start, stop) = active.requested;
+            if stop > start && (first_chunk..=last_chunk).contains(&((stop - 1) / LOG_BLOCK)) {
+                active.tail_seen = true;
+            }
             active.last_data = Instant::now();
             update_log_download_report(st, String::new());
         }
@@ -1380,6 +1387,7 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
                 let list = if sev == "DEBUG" { &mut st.sample.prearm_skipped } else { &mut st.sample.prearm };
                 note_prearm(list, &msg, wall_time());
             }
+            note_reboot_text(st, &msg);
             st.sample.texts.insert(0, format!("{sev} {msg}"));
             st.sample.texts.truncate(256);
         }
@@ -1394,9 +1402,47 @@ fn handle_msg(st: &mut LinkState, header: &MavHeader, msg: MavMessage) {
             if name.is_empty() {
                 return;
             }
+            let before = st.sample.params.get(&name).copied();
             apply_param(st, &name, param_value as f64, param_index, param_count);
+            note_reboot_param(st, &name, before, param_value as f64);
         }
         _ => {}
+    }
+}
+
+/// A time_boot_ms well below the largest seen is a new boot: what the last boot waited on is done.
+fn note_boot_time(st: &mut LinkState, time_boot_ms: u32) {
+    if st.boot_ms > 0 && time_boot_ms.saturating_add(5_000) < st.boot_ms {
+        st.sample.reboot_needed.clear();
+    }
+    st.boot_ms = time_boot_ms;
+}
+
+fn need_reboot(st: &mut LinkState, need: RebootNeed) {
+    if !st.sample.reboot_needed.iter().any(|have| have.kind == need.kind && have.name == need.name && have.text == need.text) {
+        st.sample.reboot_needed.push(need);
+    }
+}
+
+/// A changed value of a parameter that ArduPilot's metadata marks RebootRequired. The first value of a
+/// parameter on this link is not a change.
+fn note_reboot_param(st: &mut LinkState, name: &str, before: Option<f64>, after: f64) {
+    let Some(before) = before else { return };
+    if (before - after).abs() <= 1e-6 * before.abs().max(1.0) {
+        return;
+    }
+    let kind = if st.sample.frame == "plane" { "plane" } else { "copter" };
+    if crate::research::reboot_required(kind, name) {
+        need_reboot(st, RebootNeed { kind: "param", name: name.to_string(), text: String::new(), at: wall_time() });
+    }
+}
+
+/// The board's own word: the block logger's "No last page of log", or a message that asks for a reboot.
+fn note_reboot_text(st: &mut LinkState, msg: &str) {
+    if msg.contains("No last page of log") {
+        need_reboot(st, RebootNeed { kind: "log_list", name: String::new(), text: String::new(), at: wall_time() });
+    } else if msg.to_ascii_lowercase().contains("reboot") {
+        need_reboot(st, RebootNeed { kind: "vehicle", name: String::new(), text: msg.to_string(), at: wall_time() });
     }
 }
 

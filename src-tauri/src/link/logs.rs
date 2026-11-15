@@ -116,7 +116,10 @@ fn next_log_request(active: &ActiveLogDownload) -> Option<(usize, usize)> {
     let chunks = active.size.div_ceil(LOG_BLOCK);
     let mut last_missing = chunk;
     let mut next = chunk + 1;
-    while next < chunks && next - chunk < 512 && log_chunk_wanted(active, next) && next - last_missing <= LOG_GAP_MERGE {
+    // Through unread chunks the request runs on to the end of the log: the board streams it without a
+    // pause, and what is lost on the way is asked for afterwards. Past received chunks it stops after
+    // LOG_GAP_MERGE of them.
+    while next < chunks && log_chunk_wanted(active, next) && next - last_missing <= LOG_GAP_MERGE {
         if !log_bit_received(&active.received, next) {
             last_missing = next;
         }
@@ -126,10 +129,12 @@ fn next_log_request(active: &ActiveLogDownload) -> Option<(usize, usize)> {
     Some((offset, end - offset))
 }
 
-/// Every chunk of the last request has arrived: the board has closed that transfer.
+/// The board has closed the transfer of the last request: every chunk of it arrived, or its last
+/// chunk did (the board sends in order, so the rest of a range before its last chunk was sent and lost).
 fn requested_range_done(active: &ActiveLogDownload) -> bool {
     let (start, end) = active.requested;
-    end > start && (start / LOG_BLOCK..end.div_ceil(LOG_BLOCK)).all(|chunk| log_bit_received(&active.received, chunk))
+    end > start
+        && (active.tail_seen || (start / LOG_BLOCK..end.div_ceil(LOG_BLOCK)).all(|chunk| log_bit_received(&active.received, chunk)))
 }
 
 fn write_log_bytes(active: &mut ActiveLogDownload, offset: usize, data: &[u8]) {
@@ -228,6 +233,9 @@ const NO_LOG_DATA: &str = "The board has no data in this log";
 fn finish_log_peek(st: &mut LinkState, active: ActiveLogDownload) {
     let head_len = active.peek_head.min(active.bytes.len());
     let summary = crate::dflog::summarize_log(&active.bytes[..head_len], &active.bytes[head_len..]);
+    // The head is whole up to peek_head, or to the end of a log shorter than that.
+    let span = crate::dflog::HEAD_HASH_BYTES.min(active.size);
+    let head_hash = if head_len >= span { crate::dflog::head_hash(&active.bytes[..span]) } else { String::new() };
     let time_utc = st
         .sample
         .logs
@@ -245,6 +253,7 @@ fn finish_log_peek(st: &mut LinkState, active: ActiveLogDownload) {
             start_utc: start_text(&summary.start_utc, time_utc),
             duration_us: summary.duration_us,
             error: String::new(),
+            head_hash,
             updated_at: wall_time(),
         },
     );
@@ -261,6 +270,7 @@ fn fail_log_peek(st: &mut LinkState, id: u16, size: u32, error: &str) {
             start_utc: String::new(),
             duration_us: 0,
             error: error.to_string(),
+            head_hash: String::new(),
             updated_at: wall_time(),
         },
     );
@@ -388,6 +398,7 @@ fn drive_log_download(conn: &dyn MavConnection<MavMessage>, st: &mut LinkState) 
     let stalled = now.duration_since(active.last_data) > LOG_STALL;
     active.last_request = now;
     active.requested = (offset, offset + count);
+    active.tail_seen = false;
     if stalled {
         end_log_request(conn, st);
     }

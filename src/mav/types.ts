@@ -97,6 +97,8 @@ export type Sample = {
   heartbeat_at?: number;
   /** A reboot this app sent is still waiting for the board to come back. */
   rebooting?: boolean;
+  /** What this boot of the board waits on a reboot for; empty after the board boots again. */
+  reboot_needed?: RebootNeed[];
   /** RC_CHANNELS raw PWM, channel 1 first, up to 18. Empty until a frame arrives. */
   rc?: number[];
   /** STATUSTEXT, newest first. Optional so older bridge samples still parse. */
@@ -209,3 +211,6 @@ export type Cmd =
   | { op: "reboot" }
   | { op: "sitl_start"; vehicle: "copter" | "plane"; wipe: boolean; home: string; speedup: number }
   | { op: "sitl_stop" };
+
+/** `param`: a parameter ArduPilot reads at boot changed (`name`). `log_list`: the block logger cannot find where a log ends. `vehicle`: the board asked for a reboot (`text`). */
+export type RebootNeed = { kind: "param" | "log_list" | "vehicle"; name: string; text: string; at: number };

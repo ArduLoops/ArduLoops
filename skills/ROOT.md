@@ -44,7 +44,7 @@ A log reading is the log tools. When analyzing flight logs or referencing ArduPi
 - `log_audit` (HardwareReport) — safety audit, health score (0..100), vibrations, clipping, 5V power brownouts, EKF lane switches and innovations, in-flight GPS quality, motor saturation, and safety parameters.
 - `log_magfit` (MAGFit) — 3-axis compass calibration against World Magnetic Model. Lat/lon override for logs without GPS.
 - `log_filter_review` (FilterReview) — gyro vibration noise, motor peaks, estimated hover throttle, and harmonic notch filter tuning.
-- `log_pid_review` (PIDReview) — rate PID stability margins (Phase/Gain Margin), step response, rise time, overshoot, and gain recommendations.
+- `log_pid_review` (PIDReview) — the measured response of one rate loop: step response with rise time and overshoot, frequency response with bandwidth, and phase and gain margins when the log supports them. It measures any interval where the target moved: stick motion, or the chirp ArduCopter's System ID mode (SYSTEMID, the SID_ parameters) puts on one axis.
 - `log_motor_balance` — in-flight motor thrust balance, center of gravity (CG) offsets, and motor twist.
 
 ### Firmware and custom builds
@@ -94,7 +94,7 @@ Read one loop in this order.
 
 - `error_rms` and `error_p95` are how far actual sat from desired.
 - `spread` is whether actual varied more or less than desired.
-- A frequency reading of that same pair is `frf`: `gain_db`, `phase_deg`, `coherence`, and `bandwidth_hz`. `corr` and `lag_s` do not stand in for it.
+- A frequency reading of that same pair is `frf`: `gain_db`, `phase_deg`, `coherence`, and `bandwidth_hz`. `corr` and `lag_s` do not stand in for it. `frf` and `log_pid_review` are one method, so they agree on a pair; `not_measured` on either means the interval holds no response.
 - A transient is an entry of `holds`: one command that changed and then stayed. Each entry stays separate. The entries are not an average. When more commands held than `holds` lists, `hold_count` is the full number, and the listed ones are those that were steady before the change and held longest after it. `zeta` on an entry is present only when that hold was identified. A null `step` and a `hold_count` of zero mean no such command was in the interval.
 - `sides` splits the samples in `active_count` into `beyond` and `short`. Each has `share`, `mean`, and `p95`. `beyond` is actual past the command in the same direction. `short` is actual still short of it. A null `mean` means that side had no samples. `spread`, `past_command`, and `holds` do not stand in for it. The columns are `actual` and `desired` on that result.
 - `past_command` is one row, not that response.
@@ -192,6 +192,8 @@ The close says what held, what was the weak part, and the next step. A loop that
 When a conclusion about a flight rests on a log measurement, `show_chart` draws the lines that measurement used. One chart is one claim. The axis caption is the log field on that axis, `message.field`. When several fields share an axis, the caption names each of them. Omit `name` so each line stays `message.field`. Do not replace either with another name. The sentence with the chart says what those lines showed in this file. When the next step is a change or a further flight, that sentence also says what the same lines would have to show for the step to hold. In a report, the charts sit with the detail of the loop they measure. A chart of lines the conclusion does not use is not part of the answer. A shape that no measurement or returned text supports is unknown.
 
 `show_spectrum` draws the gyro spectrum, Hz against the amplitude in dB on each axis, as WebTools FilterReview does, when the conclusion is the frequency of that line. The filtered capture is on that chart when the log has one, and the gain of the configured filters is on the right axis when the log has them. `show_spectrogram` draws the time-frequency map of that capture when the conclusion is whether the line stays put or moves. Call the one the conclusion uses. A log without a gyro batch returns no chart. The axis names on those two charts stay as the tool drew them.
+
+`show_pid_response` draws what `log_pid_review` measures: with `kind: step`, the response of the rate loops to a unit step of the target, and with `kind: bode`, the closed-loop gain and phase against frequency. Both are estimated from the whole interval, not from one manoeuvre. An axis whose target barely moved, or that is logged too slowly, is not drawn and the result says why.
 
 ### Topic explanation
 

@@ -36,7 +36,8 @@ fn frame_of(mavtype: MavType) -> String {
     }
 }
 
-fn copter_mode(custom: u32) -> String {
+/// ArduCopter's mode names by number, as in ArduCopter/mode.h.
+pub(crate) fn copter_mode(custom: u32) -> String {
     match custom {
         0 => "STABILIZE",
         1 => "ACRO",
@@ -47,15 +48,30 @@ fn copter_mode(custom: u32) -> String {
         6 => "RTL",
         7 => "CIRCLE",
         9 => "LAND",
+        11 => "DRIFT",
+        13 => "SPORT",
+        14 => "FLIP",
+        15 => "AUTOTUNE",
         16 => "POSHOLD",
         17 => "BRAKE",
+        18 => "THROW",
+        19 => "AVOID_ADSB",
+        20 => "GUIDED_NOGPS",
+        21 => "SMART_RTL",
         22 => "FLOWHOLD",
+        23 => "FOLLOW",
+        24 => "ZIGZAG",
+        25 => "SYSTEMID",
+        26 => "AUTOROTATE",
+        27 => "AUTO_RTL",
+        28 => "TURTLE",
         _ => return format!("mode{custom}"),
     }
     .into()
 }
 
-fn plane_mode(custom: u32) -> String {
+/// ArduPlane's mode names by number, as in ArduPlane/mode.h.
+pub(crate) fn plane_mode(custom: u32) -> String {
     match custom {
         0 => "MANUAL",
         1 => "CIRCLE",
@@ -70,8 +86,19 @@ fn plane_mode(custom: u32) -> String {
         11 => "RTL",
         12 => "LOITER",
         13 => "TAKEOFF",
+        14 => "AVOID_ADSB",
         15 => "GUIDED",
         16 => "INIT",
+        17 => "QSTABILIZE",
+        18 => "QHOVER",
+        19 => "QLOITER",
+        20 => "QLAND",
+        21 => "QRTL",
+        22 => "QAUTOTUNE",
+        23 => "QACRO",
+        24 => "THERMAL",
+        25 => "LOITER_ALT_QLAND",
+        26 => "AUTOLAND",
         _ => return format!("mode{custom}"),
     }
     .into()

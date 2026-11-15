@@ -1,11 +1,9 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import { customCatalog, customPane, liveFieldSig, resolveLine, type CatalogTrace, type Pane } from "../lib/traces";
 import { getLatest } from "../mav/store";
 import { useStorePicked } from "../mav/view";
-import { detachWindow } from "../lib/detach";
-import { DetachButton } from "./DetachButton";
+import { FloatWindow } from "./FloatWindow";
 import { PlotStack } from "./TracePanes";
 
 export type LiveLine = { id: string; label: string };
@@ -145,10 +143,6 @@ export function LiveCard({
 /** `detached`: the window is its own OS window; it fills it and the OS moves and sizes it. */
 export function LiveWindow({ spec, onClose, detached = false }: { spec: LiveSpec; onClose: () => void; detached?: boolean }) {
   const t = useT();
-  const frame = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
-  const placed = useRef<{ left: string; top: string; width: string; height: string } | null>(null);
-  const [full, setFull] = useState(false);
   const paramN = useStorePicked((s) => Object.keys(s.params).length);
   const liveSig = useStorePicked((s) => liveFieldSig(s.live_nums));
   const panes = useMemo(
@@ -156,114 +150,17 @@ export function LiveWindow({ spec, onClose, detached = false }: { spec: LiveSpec
     [spec, paramN, liveSig],
   );
 
-  function placeFull(on: boolean) {
-    const node = frame.current;
-    if (!node) return;
-    drag.current = null;
-    if (on) {
-      placed.current = { left: node.style.left, top: node.style.top, width: node.style.width, height: node.style.height };
-      node.style.left = "";
-      node.style.top = "";
-      node.style.width = "";
-      node.style.height = "";
-      setFull(true);
-      return;
-    }
-    const prev = placed.current;
-    const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
-    node.style.left = prev?.left ?? "";
-    node.style.top = prev?.top ? `${Math.max(topMin, parseFloat(prev.top) || topMin)}px` : "";
-    node.style.width = prev?.width ?? "";
-    node.style.height = prev?.height ?? "";
-    setFull(false);
-  }
-
-  useEffect(() => {
-    if (detached) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      if (full) placeFull(false);
-      else onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [full, onClose, detached]);
-
-  async function onDetach() {
-    if (await detachWindow("live", spec, { title: t("Live lines") })) onClose();
-  }
-
-  function onDrag(ev: ReactPointerEvent<HTMLElement>) {
-    if (full || detached) return;
-    if ((ev.target as HTMLElement).closest("button")) return;
-    const node = frame.current;
-    if (!node) return;
-    const rect = node.getBoundingClientRect();
-    drag.current = { x: ev.clientX, y: ev.clientY, left: rect.left, top: rect.top };
-    try {
-      ev.currentTarget.setPointerCapture(ev.pointerId);
-    } catch {
-      /* ignore invalid pointer id */
-    }
-  }
-  function onMove(ev: ReactPointerEvent<HTMLElement>) {
-    const start = drag.current;
-    const node = frame.current;
-    if (!start || !node) return;
-    const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
-    const maxLeft = Math.max(8, window.innerWidth - node.offsetWidth - 8);
-    const maxTop = Math.max(topMin, window.innerHeight - 44);
-    node.style.left = `${Math.min(maxLeft, Math.max(8, start.left + ev.clientX - start.x))}px`;
-    node.style.top = `${Math.min(maxTop, Math.max(topMin, start.top + ev.clientY - start.y))}px`;
-  }
-
-  const view = (
-    <div
-      className={detached ? "ai-chart-window live detached" : full ? "ai-chart-window live full" : "ai-chart-window live"}
-      ref={frame}
-      role="dialog"
-      aria-label={t("Live lines")}
-    >
-        <header
-          onPointerDown={onDrag}
-          onPointerMove={onMove}
-          onPointerUp={() => { drag.current = null; }}
-          onPointerCancel={() => { drag.current = null; }}
-          onLostPointerCapture={() => { drag.current = null; }}
-        >
-          <b>{t("Live lines")}</b>
-          {detached ? null : <DetachButton onDetach={() => void onDetach()} />}
-          {detached ? null : <button
-            type="button"
-            aria-pressed={full}
-            aria-label={full ? t("Exit full screen") : t("Full screen")}
-            title={full ? t("Exit full screen") : t("Full screen")}
-            onClick={() => placeFull(!full)}
-          >
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              {full ? (
-                <path d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              ) : (
-                <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              )}
-            </svg>
-          </button>}
-          <button type="button" aria-label={t("Close")} title={t("Close")} onClick={onClose}>
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path d="M3.2 3.2 12.8 12.8M12.8 3.2 3.2 12.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-          </button>
-        </header>
-        {panes.length ? (
-          <div className="ai-live-plots">
-            <PlotStack panes={panes} />
-          </div>
-        ) : (
-          <p className="ai-live-empty">{t("No live chart is on")}</p>
-        )}
-    </div>
+  return (
+    <FloatWindow title={t("Live lines")} className="live" onClose={onClose} detached={detached} detach={{ kind: "live", payload: spec, title: t("Live lines") }}>
+      {panes.length ? (
+        <div className="ai-live-plots">
+          <PlotStack panes={panes} />
+        </div>
+      ) : (
+        <p className="ai-live-empty">{t("No live chart is on")}</p>
+      )}
+    </FloatWindow>
   );
-  return detached ? view : createPortal(view, document.body);
 }
 
 function panesFor(spec: LiveSpec, catalog: CatalogTrace[]): Pane[] {

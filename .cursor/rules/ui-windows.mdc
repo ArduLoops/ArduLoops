@@ -1,0 +1,16 @@
+---
+description: Floating windows in the ArduLoops UI use the shared FloatWindow module.
+globs: src/**/*.tsx,src/styles.css
+alwaysApply: false
+---
+
+# Floating windows
+
+- A window that floats over the app is a `FloatWindow` from `src/components/FloatWindow.tsx`. It gives the header, open in separate window, full screen, close, Escape, dragging by the header, and resizing by the corner. Do not write another header, drag handler, or full-screen toggle.
+- A window that keeps its own place in state, such as the board doc or the assistant, uses `useFloatDrag`, `useFloatResize`, `ResizeGrip`, and `WindowButtons` from the same module.
+- Every window may go anywhere in the app window. Only its header stays reachable, below the status bar. That limit is `clampToWindow`. A window opens whole in the app window, and comes back into it when the app window gets smaller: `fitToWindow`. Do not keep a window inside the panel it was opened from.
+- A window that can open in its own OS window passes `detach` with a `DetachKind` from `src/lib/detach.ts`, and `src/Detached.tsx` renders that kind. Its payload holds what the window needs to draw itself.
+- State that a window and the view it came from both show lives in a store that the windows channel syncs, such as `src/lib/studioFocus.ts` for the loops studio. It does not live in one component's `useState`, because a detached window is another page.
+- A pane of the loops studio opens in a window through `src/components/StudioWindows.tsx`.
+- An Ask from a detached window goes through `openAssistant` or `askAssistant`. They pass it to the main window when that window has no assistant.
+- The window's look is `.float-win` in `src/styles.css`. A window adds one size class, such as `live` or `findings`. A modal dialog that must be answered before the app goes on stays a dialog, not a `FloatWindow`.

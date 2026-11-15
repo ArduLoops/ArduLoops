@@ -399,6 +399,12 @@ function Actions({ controller }: { controller: Controller | null }) {
   const ok = link[0] === "1";
   const armed = link[1] === "1";
   const rebooting = link[2] === "1";
+  // Reasons this boot waits on a reboot, from the bridge: one line each, the same reason once.
+  const needs = usePicked((s) => (s.ok ? (s.reboot_needed ?? []).map((need) =>
+    need.kind === "param" ? t("{name} changed. ArduPilot reads it at boot.", { name: need.name })
+    : need.kind === "log_list" ? t("The board cannot find where its last log ends.")
+    : need.text).join("\n") : ""));
+  const reasons = needs ? needs.split("\n") : [];
   const [confirm, setConfirm] = useState(false);
   const [menu, setMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -440,8 +446,9 @@ function Actions({ controller }: { controller: Controller | null }) {
   return (
     <div className="vb-actions">
       <div className="vb-more" ref={menuRef}>
-        <button type="button" className={rebooting ? "vb-icon ghost busy" : "vb-icon ghost"} onClick={() => setMenu((v) => !v)} aria-label={t("More")} aria-expanded={menu} title={rebooting ? t("Rebooting…") : t("Back up, reboot, board id")}>
+        <button type="button" className={rebooting ? "vb-icon ghost busy" : "vb-icon ghost"} onClick={() => setMenu((v) => !v)} aria-label={reasons.length ? t("More · reboot needed") : t("More")} aria-expanded={menu} title={rebooting ? t("Rebooting…") : reasons.length ? [t("Reboot needed"), ...reasons].join("\n") : t("Back up, reboot, board id")}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" /><circle cx="8" cy="8" r="1.3" /><circle cx="12.5" cy="8" r="1.3" /></svg>
+          {reasons.length > 0 && !rebooting ? <i className="vb-badge" aria-hidden="true" /> : null}
         </button>
         {menu ? (
           <div className="vb-menu" role="menu">
@@ -454,6 +461,11 @@ function Actions({ controller }: { controller: Controller | null }) {
               <span>{confirm ? t("Click again to reboot") : t("Reboot")}</span>
               {rebootWhy ? <em>{rebootWhy}</em> : null}
             </button>
+            {reasons.length ? (
+              <ul className="vb-menu-why" aria-label={t("Reboot needed")}>
+                {reasons.map((reason) => <li key={reason}>{reason}</li>)}
+              </ul>
+            ) : null}
             <span className="vb-menu-sep" />
             <button type="button" role="menuitem" disabled={!id} onClick={() => { void navigator.clipboard?.writeText(id); addLog(t("Board id copied"), "ok"); setMenu(false); }}>{t("Copy board id")}</button>
             <span className="vb-menu-info">{controller ? t("System ID {id}", { id: controller.system_id }) : t("No board id")}</span>

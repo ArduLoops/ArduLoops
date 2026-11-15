@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n/i18n";
+import { popStudioPane, returnStudioPane, usePoppedPanes, type StudioPane } from "../lib/studioFocus";
 
 const PaneHeadCtx = createContext<HTMLElement | null>(null);
 
@@ -12,6 +13,30 @@ export function PaneHead({ children }: { children: ReactNode }) {
 }
 
 export type StudioExpand = null | "loop" | "scope";
+
+/** Moves a pane into a floating window that stays on every tab (components/StudioWindows.tsx). */
+function PopButton({ pane, className = "pane-exp" }: { pane: StudioPane; className?: string }) {
+  const t = useT();
+  return (
+    <button type="button" className={className} aria-label={t("Open in window")} title={t("Open in window")} onClick={() => popStudioPane(pane)}>
+      <svg viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="2" y="4.5" width="9.5" height="9.5" rx="1.3" fill="none" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M9 2h5v5M14 2 8.2 7.8" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
+/** What a pane shows while it is in a window. */
+function PaneAway({ pane }: { pane: StudioPane }) {
+  const t = useT();
+  return (
+    <div className="pane-away">
+      <span>{t("Shown in a window")}</span>
+      <button type="button" className="frs-btn quiet" onClick={() => returnStudioPane(pane)}>{t("Back here")}</button>
+    </div>
+  );
+}
 
 type Saved = {
   col1Rest: number;
@@ -82,11 +107,13 @@ function Pane({
 }) {
   const t = useT();
   const [slot, setSlot] = useState<HTMLDivElement | null>(null);
+  const away = usePoppedPanes().includes(area);
   return (
     <div className={"pane pane-" + area}>
       <div className="pane-head">
         {title ? <b>{title}</b> : null}
         <div className="pane-slot" ref={setSlot} />
+        {away ? null : <PopButton pane={area} />}
         <button
           type="button"
           className={expanded ? "pane-exp on" : "pane-exp"}
@@ -119,7 +146,7 @@ function Pane({
         </button>
       </div>
       <PaneHeadCtx.Provider value={slot}>
-        <div className="pane-body">{children}</div>
+        <div className="pane-body">{away ? <PaneAway pane={area} /> : children}</div>
       </PaneHeadCtx.Provider>
     </div>
   );
@@ -149,6 +176,7 @@ export function Studio({
     expand: null,
   };
   const [layout, setLayout] = useState<Saved>(() => load(frame, defaults));
+  const schemeAway = usePoppedPanes().includes("scheme");
   const box = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
   const expand = layout.expand;
@@ -250,7 +278,8 @@ export function Studio({
         }}
       >
         <div className="pane pane-scheme">
-          <div className="pane-body">{scheme}</div>
+          {schemeAway ? null : <PopButton pane="scheme" className="pane-exp pane-pop-corner" />}
+          <div className="pane-body">{schemeAway ? <PaneAway pane="scheme" /> : scheme}</div>
         </div>
         <div
           className="studio-gutter"

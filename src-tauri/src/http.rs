@@ -386,7 +386,7 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
         };
     }
 
-    if path.starts_with("/logs/") && matches!(path.as_str(), "/logs/local" | "/logs/scan" | "/logs/note" | "/logs/delete" | "/logs/share" | "/logs/reveal-shared")
+    if path.starts_with("/logs/") && matches!(path.as_str(), "/logs/local" | "/logs/scan" | "/logs/findings" | "/logs/note" | "/logs/delete" | "/logs/share" | "/logs/reveal-shared")
         || path == "/logs/cloud" || path.starts_with("/logs/cloud/")
     {
         let body = if method == "POST" { read_json_body(&mut reader, &headers, 1_048_576)? } else { serde_json::Value::Null };
@@ -398,6 +398,9 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
                 let scanned = crate::dflog::scan_log(id);
                 if scanned["ok"].as_bool() == Some(true) { Ok(scanned) } else { Err(scanned["error"].as_str().unwrap_or("Could not read the log").to_string()) }
             }
+            // The local log tools' findings of one stored log, with each call's numbers. Not computed here.
+            ("GET", "/logs/findings") => crate::dflog::findings_detail(query.get("id").map(String::as_str).unwrap_or(""), false)
+                .ok_or_else(|| "The log tools have not run on this log yet".to_string()),
             ("POST", "/logs/note") => {
                 let hash = body["hash"].as_str().unwrap_or("");
                 let board = body["board"].as_str().unwrap_or("");
@@ -1256,6 +1259,7 @@ fn log_brief_reply(
             },
             duration_us: summary.duration_us,
             error: String::new(),
+            head_hash: String::new(),
             updated_at: started,
         };
         if let Ok(mut sample) = latest.lock() {
@@ -1780,6 +1784,7 @@ fn state_view(s: &Sample) -> serde_json::Value {
         "ok": s.ok,
         "heartbeat_at": s.heartbeat_at,
         "rebooting": s.rebooting,
+        "reboot_needed": s.reboot_needed,
         "reboot_back_at": crate::link::reboot_back_at(),
         "telemetry": s.telemetry,
         "detail": s.detail,

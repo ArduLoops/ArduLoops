@@ -9,6 +9,10 @@ pub struct AuditIssue {
     pub recommendation: String,
 }
 
+/// Attitude error that counts as control lost: ArduPilot's crash check angle, held for this long.
+const ATT_LOST_DEG: f64 = 30.0;
+const ATT_LOST_S: f64 = 1.0;
+
 pub fn audit_bytes(bytes: &[u8]) -> Value {
     let formats = parse_formats(bytes);
     if formats.is_empty() {
@@ -68,6 +72,14 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
     let mut ekf_errors = 0usize;
     let mut ekf_failsafes = 0usize;
     let mut ekf_yaw_resets = 0usize;
+    // EKF3 aligns its yaw once in flight after takeoff ("in-flight yaw alignment complete"); the
+    // EKFYawReset event at that moment is that alignment, not a reset away from a wrong heading.
+    let mut yaw_reset_us: Vec<u64> = Vec::new();
+    let mut yaw_alignment_us: Vec<u64> = Vec::new();
+    // Attitude error while armed: ATT actual against desired, as ArduPilot's crash check measures it.
+    let mut att_err_since: Option<u64> = None;
+    let mut att_err_max = 0.0f64;
+    let mut control_lost: Option<(u64, f64, f64)> = None;
     let mut ekf_alt_resets = 0usize;
 
     // Motors & actuators
@@ -88,7 +100,7 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
     let mut modes: Vec<(u64, String)> = Vec::new();
 
     let mut incomplete = false;
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &["ARM", "ATT", "BAT", "EKF4", "ERR", "EV", "GPS", "MODE", "MOT", "MSG", "NKF4", "PARM", "PM", "POWR", "RCOU", "VIBE", "WDOG", "XKF4"], |fmt, _, values| {
         let us = time_us(fmt, values).unwrap_or(0);
 
         if fmt.name == "MSG" {
@@ -98,6 +110,9 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
                 }
                 if frame_type.is_empty() && (msg.contains("Frame") || msg.contains("QUAD") || msg.contains("HEXA") || msg.contains("OCTA") || msg.contains("HELI") || msg.contains("PLANE") || msg.contains("ROVER")) {
                     frame_type = msg.clone();
+                }
+                if msg.contains("yaw alignment complete") {
+                    yaw_alignment_us.push(us);
                 }
                 if msg.contains("lane switch") || msg.contains("primary changed") {
                     ekf_errors += 1;
@@ -182,6 +197,7 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
                 },
                 62 => {
                     ekf_yaw_resets += 1;
+                    yaw_reset_us.push(us);
                     if first_ekf_spike_us == 0 && us > 0 {
                         first_ekf_spike_us = us;
                     }
@@ -214,7 +230,8 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
             if v_peak >= max_vibe_x.max(max_vibe_y).max(max_vibe_z) && us > 0 {
                 worst_vibe_us = us;
             }
-        } else if fmt.name == "PM" {
+        } else if fmt.name == "POWR" || fmt.name == "PM" {
+            // The board voltage is POWR.Vcc. PM is read too for a log that carries Vcc there.
             if let Some(vcc) = field_f64(fmt, values, "Vcc") {
                 if vcc > 2.0 && vcc < 10.0 {
                     let vcc_v = if vcc > 100.0 { vcc * 0.001 } else { vcc };
@@ -240,7 +257,8 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
                 max_batt_curr = max_batt_curr.max(c);
             }
         } else if fmt.name == "GPS" {
-            let f = field_u64(fmt, values, "FixType").unwrap_or(0);
+            // GPS.Status is the fix type since ArduPilot 3.x. FixType is read for an older log.
+            let f = field_u64(fmt, values, "Status").or_else(|| field_u64(fmt, values, "FixType")).unwrap_or(0);
             let s = field_u64(fmt, values, "NSats").unwrap_or(0);
             let h = field_f64(fmt, values, "HDop").unwrap_or(99.0);
             if f > 0 { overall_lowest_fix = overall_lowest_fix.min(f); }
@@ -258,7 +276,8 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
                 }
             }
         } else if fmt.name == "ERR" {
-            let sub = field_u64(fmt, values, "SubSys").unwrap_or(0);
+            // ERR.Subsys in ArduPilot logs; SubSys is read too for a log that spells it so.
+            let sub = field_u64(fmt, values, "Subsys").or_else(|| field_u64(fmt, values, "SubSys")).unwrap_or(0);
             let code = field_u64(fmt, values, "ECode").unwrap_or(0);
 
             let sub_name = match sub {
@@ -363,8 +382,25 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
             }
         } else if fmt.name == "WDOG" {
             watchdog_reset = true;
+        } else if fmt.name == "ATT" {
+            let err = |a: &str, d: &str| Some((field_f64(fmt, values, a)? - field_f64(fmt, values, d)?).abs());
+            let e = err("Roll", "DesRoll").unwrap_or(0.0).max(err("Pitch", "DesPitch").unwrap_or(0.0));
+            if is_armed && e > ATT_LOST_DEG && us > 0 {
+                let since = *att_err_since.get_or_insert(us);
+                att_err_max = att_err_max.max(e);
+                let held = us.saturating_sub(since) as f64 / 1e6;
+                if held >= ATT_LOST_S && control_lost.map_or(true, |(_, _, max)| att_err_max > max) {
+                    control_lost = Some((since, held, att_err_max));
+                }
+            } else {
+                att_err_since = None;
+                att_err_max = 0.0;
+            }
         } else if fmt.name == "MODE" {
-            if let Some(mode) = field_str(fmt, values, "Mode") {
+            // MODE.Mode is the mode number; the name is resolved after the walk, when the vehicle is known.
+            let mode = field_str(fmt, values, "Mode")
+                .or_else(|| field_u64(fmt, values, "Mode").or_else(|| field_u64(fmt, values, "ModeNum")).map(|n| format!("#{n}")));
+            if let Some(mode) = mode {
                 if modes.last().map(|m| &m.1) != Some(&mode) {
                     modes.push((us, mode));
                 }
@@ -402,6 +438,15 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
             category: "crash".into(),
             message: format!("Crash detected by autopilot at TimeUS {}.", crash_time_us.unwrap_or(0)),
             recommendation: "Inspect log leading up to this timestamp for motor failure, battery brownout, or EKF disorientation.".into(),
+        });
+    }
+
+    if let Some((since, held, max)) = control_lost {
+        issues.push(AuditIssue {
+            severity: "critical".into(),
+            category: "crash".into(),
+            message: format!("Attitude control lost at TimeUS {since}: angle error up to {max:.0}° against the desired attitude for {held:.1} s."),
+            recommendation: "The vehicle did not follow its desired attitude. Look at the motor outputs, the battery, and the events just before this time.".into(),
         });
     }
 
@@ -511,11 +556,14 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
         });
     }
 
-    if ekf_yaw_resets > 0 {
+    let yaw_realignments = yaw_reset_us.iter()
+        .filter(|at| !yaw_alignment_us.iter().any(|al| al.abs_diff(**at) <= 1_000_000))
+        .count();
+    if yaw_realignments > 0 {
         issues.push(AuditIssue {
             severity: "warning".into(),
             category: "ekf".into(),
-            message: format!("EKF performed {} in-flight yaw reset(s).", ekf_yaw_resets),
+            message: format!("EKF performed {} in-flight yaw reset(s) after its initial alignment.", yaw_realignments),
             recommendation: "Autopilot re-aligned heading to compass. Indicates strong magnetic distortion or gyro yaw drift.".into(),
         });
     }
@@ -609,9 +657,10 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
         }
     }
     let health_score = score.clamp(0, 100) as u32;
-    let overall_health = if health_score >= 85 && !crash_detected {
+    let lost = crash_detected || control_lost.is_some();
+    let overall_health = if health_score >= 85 && !lost {
         "PASS"
-    } else if health_score >= 60 && !crash_detected {
+    } else if health_score >= 60 && !lost {
         "WARN"
     } else {
         "FAIL"
@@ -708,7 +757,7 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
             "axes": [
                 {
                     "label": "Volts",
-                    "lines": [{ "message": "PM", "field": "Vcc", "name": "Vcc 5V" }]
+                    "lines": [{ "message": "POWR", "field": "Vcc", "name": "Vcc 5V" }]
                 },
                 {
                     "label": "Amps",
@@ -749,7 +798,10 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
                 "gps": { "status": gps_status, "summary": gps_summary },
                 "motors": { "status": motors_status, "summary": motors_summary },
                 "safety_params": { "status": safety_status, "summary": safety_summary },
-                "crash": { "status": if crash_detected { "FAIL" } else { "PASS" }, "summary": if crash_detected { "Crash detected" } else { "No crash logged" } }
+                "crash": {
+                    "status": if lost { "FAIL" } else { "PASS" },
+                    "summary": if crash_detected { "Crash detected" } else if control_lost.is_some() { "Attitude control lost in flight" } else { "No crash logged" }
+                }
             }
         },
         "key_intervals": Value::Object(key_intervals.into_iter().collect()),
@@ -770,19 +822,20 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
             "status": if total_clips > 100 || max_vibe > 60.0 { "critical" } else if total_clips > 0 || max_vibe > 30.0 { "warning" } else { "good" }
         },
         "power": {
-            "vcc_min": if count_vcc > 0 { (min_vcc * 100.0).round() / 100.0 } else { 5.0 },
-            "vcc_max": if count_vcc > 0 { (max_vcc * 100.0).round() / 100.0 } else { 5.0 },
-            "vcc_ripple": if count_vcc > 0 { (vcc_ripple * 100.0).round() / 100.0 } else { 0.0 },
-            "battery_min_volt": if min_batt_v < 100.0 { (min_batt_v * 10.0).round() / 10.0 } else { 0.0 },
-            "battery_min_volt_armed": if min_batt_v_armed < 100.0 { (min_batt_v_armed * 10.0).round() / 10.0 } else { 0.0 },
+            "vcc_min": if count_vcc > 0 { json!((min_vcc * 100.0).round() / 100.0) } else { Value::Null },
+            "vcc_max": if count_vcc > 0 { json!((max_vcc * 100.0).round() / 100.0) } else { Value::Null },
+            "vcc_ripple": if count_vcc > 0 { json!((vcc_ripple * 100.0).round() / 100.0) } else { Value::Null },
+            "battery_min_volt": if min_batt_v < 100.0 { json!((min_batt_v * 10.0).round() / 10.0) } else { Value::Null },
+            "battery_min_volt_armed": if min_batt_v_armed < 100.0 { json!((min_batt_v_armed * 10.0).round() / 10.0) } else { Value::Null },
             "battery_max_curr": (max_batt_curr * 10.0).round() / 10.0,
-            "status": if count_vcc > 0 && min_vcc < 4.60 { "critical" } else if count_vcc > 0 && min_vcc < 4.80 { "warning" } else { "healthy" }
+            "status": if count_vcc == 0 { "not measured" } else if min_vcc < 4.60 { "critical" } else if min_vcc < 4.80 { "warning" } else { "healthy" }
         },
         "navigation": {
             "ekf_errors": ekf_errors,
             "ekf_failsafes": ekf_failsafes,
             "ekf_lane_switches": ekf_lane_switches,
             "ekf_yaw_resets": ekf_yaw_resets,
+            "ekf_yaw_alignments": yaw_alignment_us.len(),
             "max_ekf_ratio": (max_ekf_ratio * 10.0).round() / 10.0,
             "max_ekf_variance": {
                 "velocity": (max_ekf_vel * 10.0).round() / 10.0,
@@ -790,10 +843,10 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
                 "height": (max_ekf_hgt * 10.0).round() / 10.0,
                 "magnetometer": (max_ekf_mag * 10.0).round() / 10.0,
             },
-            "armed_min_gps_sats": if armed_min_sats == 100 { 0 } else { armed_min_sats },
+            "armed_min_gps_sats": if armed_min_sats == 100 { Value::Null } else { json!(armed_min_sats) },
             "armed_max_gps_hdop": (armed_max_hdop * 10.0).round() / 10.0,
-            "armed_min_fix_type": if armed_min_fix == 10 { 0 } else { armed_min_fix },
-            "overall_min_fix_type": if overall_lowest_fix == 10 { 0 } else { overall_lowest_fix },
+            "armed_min_fix_type": if armed_min_fix == 10 { Value::Null } else { json!(armed_min_fix) },
+            "overall_min_fix_type": if overall_lowest_fix == 10 { Value::Null } else { json!(overall_lowest_fix) },
             "gps_glitches": gps_glitches,
         },
         "motors": {
@@ -807,7 +860,14 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
             "last_disarmed_us": last_disarmed_us,
             "armed_duration_s": ((armed_time_total_us as f64) / 100_000.0).round() / 10.0,
         },
-        "modes": modes.into_iter().map(|(t, m)| json!({ "time_us": t, "mode": m })).collect::<Vec<_>>(),
+        "modes": modes.into_iter().map(|(t, m)| {
+            let name = match m.strip_prefix('#').and_then(|n| n.parse::<u32>().ok()) {
+                Some(n) if firmware_version.contains("Plane") => crate::link::plane_mode(n),
+                Some(n) => crate::link::copter_mode(n),
+                None => m,
+            };
+            json!({ "time_us": t, "mode": name })
+        }).collect::<Vec<_>>(),
         "recent_errors": errors,
         "recent_events": events,
         "verdict": {
@@ -816,7 +876,17 @@ pub fn audit_bytes(bytes: &[u8]) -> Value {
             "health_status": overall_health,
             "issues_count": issues.len(),
             "issues": issues
-        }
+        },
+        "note": concat!(
+            "verdict.issues lists each rule that fired, with the number that fired it. A rule that did not fire is not in the list. ",
+            "A subsystem the log has no records for cannot fire a rule: its PASS in health.categories means no rule fired, not that it was measured. A null value in power or navigation is that case. ",
+            "health.score starts at 100 and loses 30 for each critical issue and 10 for each warning. It counts the rules that fired. It does not weigh them, and it is not a measurement. ",
+            "health.status is PASS from 85, WARN from 60, and FAIL below that, when a crash was logged, or when attitude control was lost. ",
+            "Attitude control lost is ATT more than 30° from its desired roll or pitch for 1 s while armed, the angle ArduPilot's crash check uses. ",
+            "navigation.ekf_yaw_resets counts every EKFYawReset event; ekf_yaw_alignments counts EKF3's initial in-flight yaw alignments. A reset at an alignment is that alignment, and it is not an issue. ",
+            "verdict.safe_to_fly true means no critical rule fired in this log. It is not a clearance for the next flight. ",
+            "key_intervals are the moments around the worst value of each kind, for a chart.",
+        ),
     })
 }
 

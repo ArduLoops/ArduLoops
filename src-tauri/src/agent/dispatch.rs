@@ -710,6 +710,7 @@ fn run_tool(
         "show_chart" => crate::dflog::chart(file, args),
         "show_spectrum" => crate::dflog::gyro_picture(file, "spectrum", args),
         "show_spectrogram" => crate::dflog::gyro_picture(file, "spectrogram", args),
+        "show_pid_response" => crate::dflog::pid_picture(file, args),
         "show_live" => show_live(args, sample),
         "live_fields" => live_fields(args),
         "live_buffer" => live_buffer(args),
@@ -1406,7 +1407,7 @@ fn log_magfit_tool(args: &Value, file: &str) -> Value {
         .or_else(|| args.get("longitude").and_then(|v| v.as_f64()))
         .or_else(|| args.get("lng").and_then(|v| v.as_f64()));
 
-    let val = crate::dflog::magfit(
+    let run = || crate::dflog::magfit(
         file,
         compass,
         fit_type,
@@ -1417,6 +1418,14 @@ fn log_magfit_tool(args: &Value, file: &str) -> Value {
         lat,
         lon,
     );
+    // The Logs table runs MAGFit with its defaults; that call is answered from the cache.
+    let defaults = compass.is_none_or(|c| c == 1)
+        && fit_type.is_none_or(|f| f == "iron")
+        && motor_comp.is_none_or(|m| m == "none")
+        && check_orientation.is_none_or(|c| c)
+        && lat.is_none()
+        && lon.is_none();
+    let val = if defaults { crate::dflog::cached_tool(file, "log_magfit", None, start_us, end_us, run) } else { run() };
     with_log_hash(file, val)
 }
 
@@ -1427,7 +1436,7 @@ fn log_filter_review_tool(args: &Value, file: &str) -> Value {
     let axis = args.get("axis").and_then(|v| v.as_str());
     let start_us = args.get("start_us").and_then(|v| v.as_u64());
     let end_us = args.get("end_us").and_then(|v| v.as_u64());
-    let val = crate::dflog::filter_review(file, axis, start_us, end_us);
+    let val = crate::dflog::cached_tool(file, "log_filter_review", axis, start_us, end_us, || crate::dflog::filter_review(file, axis, start_us, end_us));
     with_log_hash(file, val)
 }
 
@@ -1435,7 +1444,7 @@ fn log_audit_tool(file: &str) -> Value {
     if file.is_empty() {
         return json!({ "ok": false, "error": "file is required. file is an id from list_logs, or local.id from vehicle_logs." });
     }
-    let val = crate::dflog::audit(file);
+    let val = crate::dflog::cached_tool(file, "log_audit", None, None, None, || crate::dflog::audit(file));
     with_log_hash(file, val)
 }
 
@@ -1445,7 +1454,7 @@ fn log_motor_balance_tool(args: &Value, file: &str) -> Value {
     }
     let start_us = args.get("start_us").and_then(|v| v.as_u64());
     let end_us = args.get("end_us").and_then(|v| v.as_u64());
-    let val = crate::dflog::motor_balance(file, start_us, end_us);
+    let val = crate::dflog::cached_tool(file, "log_motor_balance", None, start_us, end_us, || crate::dflog::motor_balance(file, start_us, end_us));
     with_log_hash(file, val)
 }
 
@@ -1456,7 +1465,10 @@ fn log_pid_review_tool(args: &Value, file: &str) -> Value {
     let axis = args.get("axis").and_then(|v| v.as_str());
     let start_us = args.get("start_us").and_then(|v| v.as_u64());
     let end_us = args.get("end_us").and_then(|v| v.as_u64());
-    let val = crate::dflog::pid_review(file, axis, start_us, end_us);
+    // PID review reads roll when no axis is given; the cache keys it the same way.
+    let axis = Some(axis.map(str::to_ascii_lowercase).unwrap_or_else(|| "roll".into()));
+    let axis = axis.as_deref();
+    let val = crate::dflog::cached_tool(file, "log_pid_review", axis, start_us, end_us, || crate::dflog::pid_review(file, axis, start_us, end_us));
     with_log_hash(file, val)
 }
 

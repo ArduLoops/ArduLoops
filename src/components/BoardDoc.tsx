@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CodeMirror from "@uiw/react-codemirror";
 import { StreamLanguage, type StreamParser } from "@codemirror/language";
@@ -11,9 +11,8 @@ import { usePicked } from "../mav/view";
 import { closeBoardWindow, openBoardWindow, raiseBoardWindow, refreshBoardDoc, setBoardWindow, useBoardDoc, useBoardWindow, useLastBoardDoc, type BoardDocReply, type BoardTab } from "../lib/boardDoc";
 import { openImageIn } from "./ImageViewer";
 import { versionKnown } from "../lib/vehicleHeader";
-import { Icon } from "./MotorSetup";
 import { detachWindow } from "../lib/detach";
-import { DetachButton } from "./DetachButton";
+import { fitToWindow, ResizeGrip, useFloatDrag, useFloatResize, WindowButtons } from "./FloatWindow";
 
 const REMARK = [remarkGfm];
 // A README image opens full screen with zoom; the others in the same README are a step away.
@@ -145,7 +144,7 @@ function clampGeom(g: Geom): Geom {
   const vh = window.innerHeight;
   const w = Math.max(MIN_W, Math.min(g.w, vw - 16));
   const h = Math.max(MIN_H, Math.min(g.h, vh - 16));
-  return { w, h, x: Math.max(8, Math.min(g.x, vw - w - 8)), y: Math.max(8, Math.min(g.y, vh - h - 8)) };
+  return { w, h, ...fitToWindow(g.x, g.y, w, h) };
 }
 
 function readGeom(): Geom {
@@ -186,7 +185,13 @@ export function BoardWindow({ detached = false, onClose }: { detached?: boolean;
   const narrow = narrowView && !detached;
   const box = useRef<HTMLElement | null>(null);
   const md = useRef<HTMLDivElement | null>(null);
-  const hold = useRef<{ kind: "move" | "size"; x: number; y: number; g: Geom } | null>(null);
+  const geomNow = useRef(geom);
+  geomNow.current = geom;
+  const rect = () => box.current?.getBoundingClientRect();
+  const keep = () => saveGeom(geomNow.current);
+  const drag = useFloatDrag({ enabled: !narrow && !detached, rect, onMove: (x, y) => setGeom((g) => ({ ...g, x, y })), onEnd: keep });
+  const resize = useFloatResize({ enabled: !narrow && !detached, rect, onSize: (w, h) => setGeom((g) => clampGeom({ ...g, w, h })), onEnd: keep, min: { w: MIN_W, h: MIN_H } });
+
 
   useEffect(() => {
     if (!win.open) return;
@@ -247,25 +252,6 @@ export function BoardWindow({ detached = false, onClose }: { detached?: boolean;
     if (await detachWindow("board", { tab: win.tab, path: win.path, heading: win.heading, doc }, { title: board || t("Board doc") })) closeBoardWindow();
   };
 
-  const start = (kind: "move" | "size") => (ev: ReactPointerEvent<HTMLElement>) => {
-    if (narrow || detached || ev.button !== 0) return;
-    if (kind === "move" && (ev.target as HTMLElement).closest("button, a")) return;
-    hold.current = { kind, x: ev.clientX, y: ev.clientY, g: geom };
-    ev.currentTarget.setPointerCapture(ev.pointerId);
-  };
-  const move = (ev: ReactPointerEvent<HTMLElement>) => {
-    const h = hold.current;
-    if (!h) return;
-    const dx = ev.clientX - h.x;
-    const dy = ev.clientY - h.y;
-    setGeom(clampGeom(h.kind === "move" ? { ...h.g, x: h.g.x + dx, y: h.g.y + dy } : { ...h.g, w: h.g.w + dx, h: h.g.h + dy }));
-  };
-  const end = () => {
-    if (!hold.current) return;
-    hold.current = null;
-    saveGeom(geom);
-  };
-
   const saved = doc.saved_at ? DAY.format(new Date(doc.saved_at * 1000)) : "";
   const age = !linked
     ? <span className="bd-age stale">{t("no link · saved {when}", { when: saved })}</span>
@@ -282,7 +268,7 @@ export function BoardWindow({ detached = false, onClose }: { detached?: boolean;
       role="dialog"
       aria-label={t("Board doc")}
     >
-      <header className="bwin-head" onPointerDown={start("move")} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
+      <header className="bwin-head" {...drag}>
         <BoardGlyph />
         <b>{board}</b>
         <span className="bwin-tabs" role="tablist">
@@ -296,8 +282,7 @@ export function BoardWindow({ detached = false, onClose }: { detached?: boolean;
           <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M12.8 8a4.8 4.8 0 1 1-1.5-3.5M12 2.2v2.8H9.2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
         <a className="bd-ext" href={`${TREE}/${ghPath}`}>GitHub ↗</a>
-        {detached || narrow ? null : <DetachButton className="mw-icon" onDetach={() => void onDetach()} />}
-        <button type="button" className="mw-icon" onClick={close} aria-label={t("Close")} title={t("Close")}>{Icon.x()}</button>
+        <WindowButtons className="mw-icon" onDetach={detached || narrow ? undefined : () => void onDetach()} onClose={close} />
       </header>
       <div className="bwin-body">
         {tab === "readme" ? (
@@ -332,9 +317,7 @@ export function BoardWindow({ detached = false, onClose }: { detached?: boolean;
         ) : null}
       </div>
       {narrow || detached ? null : (
-        <span className="bwin-grip" onPointerDown={start("size")} onPointerMove={move} onPointerUp={end} onPointerCancel={end} aria-hidden="true">
-          <svg viewBox="0 0 12 12" width="12" height="12"><path d="M11 5L5 11M11 8.5L8.5 11" /></svg>
-        </span>
+        <ResizeGrip {...resize} />
       )}
     </section>
   );

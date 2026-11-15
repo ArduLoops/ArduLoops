@@ -73,8 +73,7 @@ pub fn param_doc(frame: &str, name: &str) -> Value {
             ("error", &error),
         ], None),
     };
-    let needle = format!("name=\"{name}\"");
-    let Some(at) = xml.find(&needle) else {
+    let Some(at) = pdef_param_at(&xml, &name) else {
         return render_doc(&[
             ("ok", "true"),
             ("name", &name),
@@ -154,22 +153,66 @@ fn build_param_index(kind: &str) -> Value {
         let end = rest.find("</param>").unwrap_or(rest.len().min(5000));
         let block = &rest[..end];
         rest = &rest[end..];
-        let name = attr(block, "name");
+        // Vehicle parameters are named "ArduCopter:FLTMODE1" in apm.pdef.xml; the vehicle knows them as FLTMODE1.
+        let full = attr(block, "name");
+        let name = full.split_once(':').map(|(_, bare)| bare.to_string()).unwrap_or(full);
         if name.is_empty() {
             continue;
         }
         let range = field(block, "Range");
         let (min, max) = split_range(&range);
-        params.insert(name, json!({
+        let mut entry = json!({
             "human": attr(block, "humanName"),
             "doc": attr(block, "documentation").chars().take(240).collect::<String>(),
             "min": min,
             "max": max,
             "range": range,
             "units": field(block, "Units"),
-        }));
+        });
+        // A parameter with named values (a mode, a type, an option) carries them: code to label.
+        let values = value_list(block);
+        if !values.is_empty() {
+            entry["values"] = Value::Object(values);
+        }
+        params.insert(name, entry);
     }
     json!({ "ok": true, "vehicle": kind, "source": pdef_url(kind), "params": params })
+}
+
+/// Where the `<param>` named `name` is in apm.pdef.xml. Vehicle parameters carry the vehicle's
+/// prefix there, such as "ArduCopter:FLTMODE1"; library parameters, such as INS_GYRO_FILTER, do not.
+fn pdef_param_at(xml: &str, name: &str) -> Option<usize> {
+    if let Some(at) = xml.find(&format!("name=\"{name}\"")) {
+        return Some(at);
+    }
+    let suffix = format!(":{name}\"");
+    xml.match_indices(&suffix).map(|(at, _)| at).find(|at| {
+        xml[..*at].rfind("name=\"").is_some_and(|start| !xml[start + 6..*at].contains(['"', ' ', '>']))
+    })
+}
+
+/// The `<value code="N">Label</value>` entries of one `<param>` block of apm.pdef.xml.
+fn value_list(block: &str) -> Map<String, Value> {
+    let mut out = Map::new();
+    let Some(start) = block.find("<values>") else { return out };
+    let end = block[start..].find("</values>").map(|n| start + n).unwrap_or(block.len());
+    let mut rest = &block[start..end];
+    while let Some(at) = rest.find("<value code=\"") {
+        rest = &rest[at + 13..];
+        let Some(q) = rest.find('"') else { break };
+        let code = rest[..q].to_string();
+        let Some(gt) = rest.find('>') else { break };
+        let Some(close) = rest.find("</value>") else { break };
+        if gt < close {
+            out.insert(code, json!(unescape_xml(&rest[gt + 1..close])));
+        }
+        rest = &rest[close..];
+    }
+    out
+}
+
+fn unescape_xml(text: &str) -> String {
+    text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
 }
 
 fn split_range(range: &str) -> (String, String) {
@@ -711,6 +754,35 @@ fn cached_pdef(kind: &str) -> Result<String, String> {
     Ok(xml)
 }
 
+/// Whether apm.pdef.xml marks this parameter RebootRequired. Reads the cached file only; without it, false.
+pub fn reboot_required(kind: &str, name: &str) -> bool {
+    static SETS: Mutex<Option<HashMap<String, std::collections::HashSet<String>>>> = Mutex::new(None);
+    let Ok(mut guard) = SETS.lock() else { return false };
+    let sets = guard.get_or_insert_with(HashMap::new);
+    if !sets.contains_key(kind) {
+        let Ok(xml) = fs::read_to_string(data_dir().join("cache").join(format!("pdef-{kind}.xml"))) else { return false };
+        sets.insert(kind.to_string(), reboot_set(&xml));
+    }
+    sets.get(kind).is_some_and(|set| set.contains(name))
+}
+
+/// The bare names of every `<param>` whose RebootRequired field is True.
+fn reboot_set(xml: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    let mut rest = xml;
+    while let Some(at) = rest.find("<param ") {
+        rest = &rest[at..];
+        let end = rest.find("</param>").unwrap_or(rest.len());
+        let block = &rest[..end];
+        rest = &rest[end..];
+        if field(block, "RebootRequired").eq_ignore_ascii_case("true") {
+            let full = attr(block, "name");
+            out.insert(full.split_once(':').map(|(_, bare)| bare.to_string()).unwrap_or(full));
+        }
+    }
+    out
+}
+
 fn pdef_url(kind: &str) -> &'static str {
     match kind {
         "plane" => "https://autotest.ardupilot.org/Parameters/ArduPlane/apm.pdef.xml",
@@ -1033,6 +1105,35 @@ fn html_text(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reboot_required_parameters_are_read_from_the_metadata() {
+        let xml = r#"<param name="ArduCopter:FRAME_CLASS" humanName="Frame Class"><field name="RebootRequired">True</field></param><param name="INS_GYRO_FILTER" humanName="Gyro"><field name="Range">0 256</field></param><param name="BATT_MONITOR" humanName="Monitor"><field name="RebootRequired">True</field></param>"#;
+        let set = super::reboot_set(xml);
+        assert!(set.contains("FRAME_CLASS"));
+        assert!(set.contains("BATT_MONITOR"));
+        assert!(!set.contains("INS_GYRO_FILTER"));
+    }
+
+    #[test]
+    fn a_vehicle_parameter_is_found_without_its_prefix() {
+        let xml = r#"<param humanName="Gyro" name="INS_GYRO_FILTER" documentation="a"></param><param humanName="Flight Mode 1" name="ArduCopter:FLTMODE1" documentation="b"></param><param humanName="Other" name="ArduCopter:XFLTMODE1" documentation="c"></param>"#;
+        let at = super::pdef_param_at(xml, "FLTMODE1").unwrap();
+        assert!(xml[..at].ends_with("name=\"ArduCopter"), "{}", &xml[at - 20..at + 10]);
+        assert!(super::pdef_param_at(xml, "INS_GYRO_FILTER").is_some());
+        assert!(super::pdef_param_at(xml, "MODE1").is_none());
+    }
+
+    #[test]
+    fn a_parameter_block_gives_its_named_values() {
+        let block = r#"<param humanName="Flight Mode 1" name="ArduCopter:FLTMODE1" documentation="x"><values><value code="0">Stabilize</value><value code="25">SystemID</value><value code="27">Auto RTL</value><value code="3">A &amp; B</value></values><field name="Range">0 28</field></param>"#;
+        let values = super::value_list(block);
+        assert_eq!(values.get("0").and_then(|v| v.as_str()), Some("Stabilize"));
+        assert_eq!(values.get("25").and_then(|v| v.as_str()), Some("SystemID"));
+        assert_eq!(values.get("27").and_then(|v| v.as_str()), Some("Auto RTL"));
+        assert_eq!(values.get("3").and_then(|v| v.as_str()), Some("A & B"));
+        assert!(super::value_list(r#"<param name="X"><field name="Range">0 1</field></param>"#).is_empty());
+    }
+
     use super::{article_window, best_page, compact_index, glob_name, json_string_array, line_window, read_index_head, source, source_slice, split_glob, LineSlice};
 
     #[test]

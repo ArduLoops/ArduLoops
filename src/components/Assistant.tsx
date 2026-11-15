@@ -1,5 +1,4 @@
-import { lazy, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { lazy, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
@@ -14,7 +13,7 @@ import { ProfileCard } from "./ProfileForm";
 import { WizardHost, wizardScope, type WizardAsk } from "./WizardHost";
 import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
-import { DetachButton } from "./DetachButton";
+import { FloatWindow, fitToWindow, useFloatDrag, WindowButtons } from "./FloatWindow";
 import { closeSelf, detachWindow } from "../lib/detach";
 import { openOptionsInMain, useAssistantDetached, useAssistantRemote } from "../lib/assistantBridge";
 import { LiveHost, LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
@@ -608,6 +607,7 @@ export function Assistant({
       // Ask: a new chat with the view chip on and nothing sent. A running turn is not cut.
       if (!busyRef.current) newThreadRef.current?.();
       setAskStarters(detail.starters ?? []);
+      if (detail.text) setDraft(detail.text);
       if (detail.log) {
         const log = detail.log;
         setLogId(log);
@@ -630,7 +630,6 @@ export function Assistant({
   const [logId, setLogId] = useState("");
   const [images, setImages] = useState<string[]>([]);
   const [pos, setPos] = useState(() => placeFloat(true));
-  const drag = useRef<{ dx: number; dy: number; w: number; h: number } | null>(null);
   const panel = useRef<HTMLElement>(null);
   const sendAbort = useRef<AbortController | null>(null);
   const sending = useRef(false);
@@ -963,22 +962,11 @@ export function Assistant({
     }
   }
 
-  function onDragStart(ev: ReactPointerEvent) {
-    if (narrow || detached) return;
-    if ((ev.target as HTMLElement).closest("button")) return;
-    const frame = panel.current?.getBoundingClientRect();
-    if (!frame) return;
-    drag.current = { dx: ev.clientX - frame.left, dy: ev.clientY - frame.top, w: frame.width, h: frame.height };
-    (ev.currentTarget as HTMLElement).setPointerCapture(ev.pointerId);
-  }
-  function onDrag(ev: ReactPointerEvent) {
-    const hold = drag.current;
-    if (!hold) return;
-    setPos(clampFloat(ev.clientX - hold.dx, ev.clientY - hold.dy, hold.w, hold.h));
-  }
-  function onDragEnd() {
-    drag.current = null;
-  }
+  const drag = useFloatDrag({
+    enabled: !narrow && !detached,
+    rect: () => panel.current?.getBoundingClientRect(),
+    onMove: (x, y) => setPos({ x, y }),
+  });
   function openBench() {
     setChecks({ ...EMPTY_CHECKS });
     setBenchOpen(true);
@@ -1027,8 +1015,14 @@ export function Assistant({
       node.style.height = "";
       return;
     }
-    const frame = node.getBoundingClientRect();
-    setPos((p) => clampFloat(p.x, p.y, frame.width, frame.height));
+    // The panel opens whole in the window: its size changes with setup and chat, and the window may be smaller now.
+    const fit = () => {
+      const frame = node.getBoundingClientRect();
+      setPos((p) => fitToWindow(p.x, p.y, frame.width, frame.height));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
   }, [configured, open, narrow]);
 
   const droneKey = vehicleKey(vehicle);
@@ -1173,10 +1167,7 @@ export function Assistant({
         >
           <header
             className="ai-float-head"
-            onPointerDown={onDragStart}
-            onPointerMove={onDrag}
-            onPointerUp={onDragEnd}
-            onPointerCancel={onDragEnd}
+            {...drag}
           >
             {configured ? (
               <button
@@ -1192,30 +1183,19 @@ export function Assistant({
             ) : null}
             <strong>{t("Assistant")}</strong>
             <span title={linkLine}>{linkLine}</span>
-            {detached || narrow ? null : <DetachButton className="ai-x" onDetach={() => void onDetach()} />}
+            <WindowButtons className="ai-x" onDetach={detached || narrow ? undefined : () => void onDetach()} />
             {configured && !detached ? (
               <button
                 type="button"
                 className="ai-x"
                 aria-label={t("Open the assistant")}
                 title={t("Open the assistant")}
-                onPointerDown={(ev) => ev.stopPropagation()}
                 onClick={() => { setOpen(false); onOpenHome(); }}
               >
                 <OpenPageIcon />
               </button>
             ) : null}
-            <button
-              type="button"
-              className="ai-x"
-              aria-label={t("Close")}
-              onPointerDown={(ev) => ev.stopPropagation()}
-              onClick={() => (detached ? void closeSelf() : setOpen(false))}
-            >
-              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <path d="M3.2 3.2 12.8 12.8M12.8 3.2 3.2 12.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-              </svg>
-            </button>
+            <WindowButtons className="ai-x" onClose={() => (detached ? void closeSelf() : setOpen(false))} />
           </header>
           {configured ? (
             <ChatPane
@@ -2648,7 +2628,7 @@ function chartBrief(output: string): string {
 }
 
 function shownOutput(item: ToolItem): string {
-  return item.name === "show_chart" || item.name === "show_spectrum" || item.name === "show_spectrogram"
+  return item.name === "show_chart" || item.name === "show_spectrum" || item.name === "show_spectrogram" || item.name === "show_pid_response"
     ? chartBrief(item.output)
     : formatTool(item.output);
 }
@@ -2812,10 +2792,6 @@ function DocStrip({ docs }: { docs: SavedDoc[] }) {
 
 export function DocWindow({ doc, onClose, detached = false }: { doc: SavedDoc; onClose: () => void; detached?: boolean }) {
   const t = useT();
-  const frame = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
-  const placed = useRef<{ left: string; top: string; width: string; height: string } | null>(null);
-  const [full, setFull] = useState(false);
   const [loaded, setLoaded] = useState<CloudDoc | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -2836,68 +2812,6 @@ export function DocWindow({ doc, onClose, detached = false }: { doc: SavedDoc; o
     });
     return () => { stop = true; };
   }, [doc.id, doc.url]);
-
-  function placeFull(on: boolean) {
-    const node = frame.current;
-    if (!node) return;
-    drag.current = null;
-    if (on) {
-      placed.current = { left: node.style.left, top: node.style.top, width: node.style.width, height: node.style.height };
-      node.style.left = "";
-      node.style.top = "";
-      node.style.width = "";
-      node.style.height = "";
-      setFull(true);
-      return;
-    }
-    const prev = placed.current;
-    const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
-    node.style.left = prev?.left ?? "";
-    node.style.top = prev?.top ? `${Math.max(topMin, parseFloat(prev.top) || topMin)}px` : "";
-    node.style.width = prev?.width ?? "";
-    node.style.height = prev?.height ?? "";
-    setFull(false);
-  }
-
-  useEffect(() => {
-    if (detached) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      if (full) placeFull(false);
-      else onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [full, onClose, detached]);
-
-  async function onDetach() {
-    if (await detachWindow("doc", doc, { title: doc.title || t("Document"), key: doc.id || doc.url || doc.title })) onClose();
-  }
-
-  function onDrag(ev: ReactPointerEvent<HTMLElement>) {
-    if (full || detached) return;
-    if ((ev.target as HTMLElement).closest("button, a")) return;
-    const node = frame.current;
-    if (!node) return;
-    const rect = node.getBoundingClientRect();
-    drag.current = { x: ev.clientX, y: ev.clientY, left: rect.left, top: rect.top };
-    try {
-      ev.currentTarget.setPointerCapture(ev.pointerId);
-    } catch {
-      /* ignore invalid pointer id */
-    }
-  }
-
-  function onMove(ev: ReactPointerEvent<HTMLElement>) {
-    const start = drag.current;
-    const node = frame.current;
-    if (!start || !node) return;
-    const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
-    const maxLeft = Math.max(8, window.innerWidth - node.offsetWidth - 8);
-    const maxTop = Math.max(topMin, window.innerHeight - 44);
-    node.style.left = `${Math.min(maxLeft, Math.max(8, start.left + ev.clientX - start.x))}px`;
-    node.style.top = `${Math.min(maxTop, Math.max(topMin, start.top + ev.clientY - start.y))}px`;
-  }
 
   const ownerDocId = loaded?.id || doc.id || (doc.url.includes("/d/") ? doc.url.split("/d/")[1]?.split(/[/?#]/)[0] : "");
   const format = loaded?.format || doc.format || "html";
@@ -2929,96 +2843,64 @@ export function DocWindow({ doc, onClose, detached = false }: { doc: SavedDoc; o
     }
   }
 
-  const view = (
-      <div
-        className={detached ? "ai-chart-window ai-doc-window detached" : full ? "ai-chart-window ai-doc-window full" : "ai-chart-window ai-doc-window"}
-        ref={frame}
-        role="dialog"
-        aria-label={title}
-        onClick={(ev) => ev.stopPropagation()}
-      >
-        <header
-          onPointerDown={onDrag}
-          onPointerMove={onMove}
-          onPointerUp={() => { drag.current = null; }}
-          onPointerCancel={() => { drag.current = null; }}
-          onLostPointerCapture={() => { drag.current = null; }}
-        >
-          <b>{title}</b>
-          <span className="ai-doc-meta">
-            {format}
-            {views != null ? ` · ${t("{n} views", { n: views })}` : ""}
-          </span>
-          {ownerDocId ? (
-            <button
-              type="button"
-              className={isShared ? "ai-doc-action" : "ai-doc-action cyan"}
-              disabled={busy || !loaded}
-              onClick={() => void onToggleShare()}
-            >
-              {isShared ? t("Stop sharing") : t("Share")}
-            </button>
-          ) : null}
-          {browserUrl ? (
-            <a
-              className="ai-doc-link"
-              href={browserUrl}
-              target="_blank"
-              rel="noreferrer"
-              aria-label={t("Open in browser")}
-              title={t("Open in browser")}
-            >
-              <OpenPageIcon />
-            </a>
-          ) : null}
-          {detached ? null : <DetachButton onDetach={() => void onDetach()} />}
-          {detached ? null : <button
+  return (
+    <FloatWindow
+      title={title}
+      className="ai-doc-window"
+      onClose={onClose}
+      detached={detached}
+      backdrop
+      detach={{ kind: "doc", payload: doc, title: doc.title || t("Document"), key: doc.id || doc.url || doc.title }}
+      head={<>
+        <span className="ai-doc-meta">
+          {format}
+          {views != null ? ` · ${t("{n} views", { n: views })}` : ""}
+        </span>
+        {ownerDocId ? (
+          <button
             type="button"
-            aria-pressed={full}
-            aria-label={full ? t("Exit full screen") : t("Full screen")}
-            title={full ? t("Exit full screen") : t("Full screen")}
-            onClick={() => placeFull(!full)}
+            className={isShared ? "ai-doc-action" : "ai-doc-action cyan"}
+            disabled={busy || !loaded}
+            onClick={() => void onToggleShare()}
           >
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              {full ? (
-                <path d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              ) : (
-                <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              )}
-            </svg>
-          </button>}
-          <button type="button" aria-label={t("Close")} title={t("Close")} onClick={onClose}>
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path d="M3.2 3.2 12.8 12.8M12.8 3.2 3.2 12.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
+            {isShared ? t("Stop sharing") : t("Share")}
           </button>
-        </header>
-        {shareUrl ? (
-          <div className="ai-doc-share-bar">
-            <a href={shareUrl} target="_blank" rel="noreferrer">{shareUrl}</a>
-          </div>
         ) : null}
-        <div className="ai-doc-body">
-          {err ? (
-            <p className="ai-live-empty">{t(err)}</p>
-          ) : !loaded ? (
-            <p className="ai-live-empty">{t("Loading…")}</p>
-          ) : format === "html" || format === "svg" ? (
-            <iframe sandbox="allow-scripts allow-forms" srcDoc={loaded.body} title={title} />
-          ) : format === "md" ? (
-            <div className="ai-doc-md">
-              <AssistantMarkdown text={loaded.body} />
-            </div>
-          ) : (
-            <pre>{loaded.body}</pre>
-          )}
+        {browserUrl ? (
+          <a
+            className="ai-doc-link"
+            href={browserUrl}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={t("Open in browser")}
+            title={t("Open in browser")}
+          >
+            <OpenPageIcon />
+          </a>
+        ) : null}
+      </>}
+    >
+      {shareUrl ? (
+        <div className="ai-doc-share-bar">
+          <a href={shareUrl} target="_blank" rel="noreferrer">{shareUrl}</a>
         </div>
+      ) : null}
+      <div className="ai-doc-body">
+        {err ? (
+          <p className="ai-live-empty">{t(err)}</p>
+        ) : !loaded ? (
+          <p className="ai-live-empty">{t("Loading…")}</p>
+        ) : format === "html" || format === "svg" ? (
+          <iframe sandbox="allow-scripts allow-forms" srcDoc={loaded.body} title={title} />
+        ) : format === "md" ? (
+          <div className="ai-doc-md">
+            <AssistantMarkdown text={loaded.body} />
+          </div>
+        ) : (
+          <pre>{loaded.body}</pre>
+        )}
       </div>
-  );
-  if (detached) return view;
-  return createPortal(
-    <div className="ai-chart-back" onClick={onClose} role="presentation">{view}</div>,
-    document.body,
+    </FloatWindow>
   );
 }
 
@@ -3668,22 +3550,7 @@ function Sparkle() {
 function placeFloat(setup: boolean): { x: number; y: number } {
   const w = Math.min(440, window.innerWidth - 24);
   const h = setup ? 188 : Math.min(560, window.innerHeight - 96);
-  return clampFloat(window.innerWidth - w - 18, window.innerHeight - h - 78, w, h);
-}
-
-function statusBarTop(): number {
-  if (typeof window === "undefined" || typeof document === "undefined") return 0;
-  const raw = getComputedStyle(document.documentElement).getPropertyValue("--status-top").trim();
-  const px = parseFloat(raw);
-  return Number.isFinite(px) ? px : 0;
-}
-
-function clampFloat(x: number, y: number, w: number, _h: number): { x: number; y: number } {
-  const topMin = Math.max(8, statusBarTop());
-  return {
-    x: Math.min(Math.max(8, x), Math.max(8, window.innerWidth - w - 8)),
-    y: Math.min(Math.max(topMin, y), Math.max(topMin, window.innerHeight - 44)),
-  };
+  return fitToWindow(window.innerWidth - w - 18, window.innerHeight - h - 78, w, h);
 }
 
 function useNarrow(): boolean {

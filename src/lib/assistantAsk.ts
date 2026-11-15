@@ -1,3 +1,5 @@
+import { detachedFromUrl, focusWindow, MAIN_LABEL, postWindowMsg } from "./detach";
+
 /**
  * Fired by buttons outside the chat. Each starts a new conversation.
  * `send`: the text is sent at once as the user's message (Fix, Walk me through setup).
@@ -7,8 +9,19 @@ export const ASK_ASSISTANT = "arduloops:assistant-ask";
 
 export type AskDetail = { text: string; send: boolean; starters?: string[]; keep?: boolean; log?: string; chat?: string };
 
+/** The Ask goes to this window's assistant, or, from a detached window without one, to the main window. */
+function dispatchAsk(detail: AskDetail): void {
+  const here = detachedFromUrl();
+  if (here && here.kind !== "assistant") {
+    postWindowMsg({ type: "main-ask", detail });
+    void focusWindow(MAIN_LABEL);
+    return;
+  }
+  window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail }));
+}
+
 export function askAssistant(text: string): void {
-  window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text, send: true } }));
+  dispatchAsk({ text, send: true });
 }
 
 let focusWanted = false;
@@ -25,18 +38,18 @@ export function takeFocusRequest(): boolean {
   return wanted;
 }
 
-/** `log` attaches a stored log to the new chat (an id from /ai/logs, or cloud:{hash}). */
-export function openAssistant(starters: string[] = [], log = ""): void {
+/** `log` attaches a stored log to the new chat (an id from /ai/logs, or cloud:{hash}). `draft` is put in the composer, not sent. */
+export function openAssistant(starters: string[] = [], log = "", draft = ""): void {
   focusWanted = true;
-  window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text: "", send: false, starters, log } }));
+  dispatchAsk({ text: draft, send: false, starters, log });
 }
 
 /** Opens the assistant on one stored conversation, e.g. a chat of a board opened from the database. */
 export function openAssistantChat(chat: string): void {
-  window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text: "", send: false, chat } }));
+  dispatchAsk({ text: "", send: false, chat });
 }
 
 /** Opens the chat on the conversation already there, e.g. where an assistant card waits. */
 export function showAssistant(): void {
-  window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail: { text: "", send: false, keep: true } }));
+  dispatchAsk({ text: "", send: false, keep: true });
 }

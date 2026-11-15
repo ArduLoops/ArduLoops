@@ -28,7 +28,7 @@ pub fn motor_balance_bytes(
     let mut incomplete = false;
 
     // First scan parameters to find active motors and frame
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &["ESC", "PARM", "RCOU"], |fmt, _, values| {
         if fmt.name == "PARM" {
             if let (Some(name), Some(val)) = (field_str(fmt, values, "Name"), field_f64(fmt, values, "Value")) {
                 if name.starts_with("SERVO") || name.starts_with("FRAME_") || name.starts_with("MOT_") {
@@ -71,7 +71,7 @@ pub fn motor_balance_bytes(
     // RCOU field names
     let rcou_names: Vec<String> = motor_channels.iter().map(|(_, ch)| format!("C{}", ch)).collect();
 
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &["ESC", "PARM", "RCOU"], |fmt, _, values| {
         let Some(us) = time_us(fmt, values) else { return };
         if start_us.is_some_and(|s| us < s) || end_us.is_some_and(|e| us > e) {
             return;
@@ -269,6 +269,15 @@ pub fn motor_balance_bytes(
             "status": if is_balanced { "balanced" } else { "imbalanced" }
         },
         "issues": issues,
+        "note": concat!(
+            "motors[].avg_pwm is the mean RCOU output of that motor over the samples used, and diff_pct is its difference from the mean of all motors. ",
+            "A motor that works harder than the others can come from the centre of gravity, a twisted arm, a weaker motor or propeller, or steady wind and forward flight. This result does not tell these apart. ",
+            "balance.cg_pitch_bias_pct, cg_roll_bias_pct, and yaw_twist_pct are computed only for four motors, and they assume the Quad X order: 1 front right, 2 rear left, 3 front left, 4 rear right. On another four-motor frame they are not valid. With another motor count they are 0 and were not computed. ",
+            "Positive cg_pitch_bias_pct is the front pair above the rear, positive cg_roll_bias_pct the left pair above the right, positive yaw_twist_pct the CW pair above the CCW. ",
+            "An entry of issues is a rule that fired: 6% for the front-rear or left-right pairs, 4.5% for CW against CCW, 12% for one motor against the mean. ",
+            "avg_rpm, avg_curr_a, and avg_temp_c are present only when the log has ESC telemetry for that motor. ",
+            "hover_interval is the span of the samples used.",
+        ),
         "recommendation": if is_balanced {
             "Motor thrust distribution is well balanced. Center of gravity and motor alignments are nominal."
         } else {

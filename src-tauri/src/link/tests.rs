@@ -36,12 +36,12 @@ mod normalize_tests {
     #[test]
     fn mavlink_udp_port_is_not_tcp() {
         assert_eq!(
-            normalize_link("192.168.6.167:14550"),
-            "udpout:192.168.6.167:14550"
+            normalize_link("192.168.1.20:14550"),
+            "udpout:192.168.1.20:14550"
         );
         assert_eq!(
-            normalize_link("tcpout:192.168.6.167:5760"),
-            "tcpout:192.168.6.167:5760"
+            normalize_link("tcpout:192.168.1.20:5760"),
+            "tcpout:192.168.1.20:5760"
         );
         assert_eq!(normalize_link("udp:14550"), "udpin:0.0.0.0:14550");
     }
@@ -321,6 +321,37 @@ mod live_buffer_tests {
         assert!(rng.get("u").is_none());
         assert!(rng.get("p").is_none());
         assert!(value["note"].as_str().unwrap().contains("An empty unit is unknown."));
+    }
+
+    #[test]
+    fn reboot_reasons_gather_until_the_board_boots_again() {
+        let mut st = LinkState::new();
+        let hdr = MavHeader { system_id: 1, component_id: 1, sequence: 0 };
+        let attitude = |ms: u32| MavMessage::ATTITUDE(mavlink::dialects::ardupilotmega::ATTITUDE_DATA {
+            time_boot_ms: ms, roll: 0.0, pitch: 0.0, yaw: 0.0, rollspeed: 0.0, pitchspeed: 0.0, yawspeed: 0.0,
+        });
+        let text = |t: &str| {
+            let mut buf = [0u8; 50];
+            buf[..t.len()].copy_from_slice(t.as_bytes());
+            MavMessage::STATUSTEXT(mavlink::dialects::ardupilotmega::STATUSTEXT_DATA {
+                severity: mavlink::dialects::ardupilotmega::MavSeverity::MAV_SEVERITY_ERROR,
+                text: buf.into(),
+                ..Default::default()
+            })
+        };
+        handle_msg(&mut st, &hdr, attitude(600_000));
+        handle_msg(&mut st, &hdr, text("No last page of log 7 at top=5CDA or bot=5CD9"));
+        handle_msg(&mut st, &hdr, text("No last page of log 7 at top=5CDA or bot=5CD9"));
+        handle_msg(&mut st, &hdr, text("PreArm: Compass: reboot required"));
+        handle_msg(&mut st, &hdr, text("SystemID Finished"));
+        let kinds: Vec<&str> = st.sample.reboot_needed.iter().map(|need| need.kind).collect();
+        assert_eq!(kinds, ["log_list", "vehicle"], "{:?}", st.sample.reboot_needed);
+        // Time keeps going: still the same boot.
+        handle_msg(&mut st, &hdr, attitude(601_000));
+        assert_eq!(st.sample.reboot_needed.len(), 2);
+        // A new boot starts its clock again.
+        handle_msg(&mut st, &hdr, attitude(3_000));
+        assert!(st.sample.reboot_needed.is_empty());
     }
 
     #[test]
@@ -811,6 +842,7 @@ mod log_end_tests {
             last_data: now,
             last_request: now,
             requested: (0, 0),
+            tail_seen: false,
             peek_head: 0,
             peek_tail: 0,
         });
@@ -850,6 +882,22 @@ mod log_end_tests {
         mark_log_bit(&mut active.received, 14);
         assert!(requested_range_done(active));
         assert_eq!(next_log_request(active), Some((3600, 90)));
+    }
+
+    #[test]
+    fn a_fresh_log_is_asked_for_to_its_end_and_a_range_ends_with_its_last_chunk() {
+        let mut st = downloading(90 * 2000);
+        let active = st.active_log_download.as_mut().unwrap();
+        // Nothing read yet: one request for the whole log, not a window.
+        assert_eq!(next_log_request(active), Some((0, 90 * 2000)));
+        active.requested = (0, 90 * 2000);
+        // Chunk 5 is lost on the way; the last chunk arrives, so the board is done with this range.
+        for chunk in (0..2000).filter(|c| *c != 5) {
+            log_data(&mut st, (chunk * 90) as u32, 90);
+        }
+        let active = st.active_log_download.as_ref().unwrap();
+        assert!(requested_range_done(active));
+        assert_eq!(next_log_request(active), Some((450, 90)));
     }
 
     #[test]

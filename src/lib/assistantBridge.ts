@@ -27,6 +27,12 @@ export function useAssistantRemote(enabled: boolean, onOptions: () => void) {
       } else if (msg.type === "assistant-options") {
         options.current();
         void focusWindow(MAIN_LABEL);
+      } else if (msg.type === "main-ask") {
+        // An Ask from a detached panel (a chart, the log findings): this window's assistant takes it.
+        const detail = msg.detail as AskDetail;
+        if (!detail.send && !detail.keep) requestComposerFocus();
+        window.dispatchEvent(new CustomEvent<AskDetail>(ASK_ASSISTANT, { detail }));
+        void focusWindow(MAIN_LABEL);
       }
     });
     const offView = subscribeSetupView(() => {

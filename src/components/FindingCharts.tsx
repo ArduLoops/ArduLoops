@@ -1,15 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { createPortal } from "react-dom";
-import { useT } from "../i18n/i18n";
-import { detachWindow } from "../lib/detach";
-import { DetachButton } from "./DetachButton";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { FloatWindow } from "./FloatWindow";
 
 /** `faint`: a reference line drawn thin and half transparent, such as the spectrum before the filters. */
-export type ChartLine = { name: string; x: number[]; y: number[]; hue?: number; dash?: string; faint?: boolean };
+/** `unlisted`: drawn, with no legend entry. `quiet`: an edge of a band, with no stroke, no legend entry and no hover. `fill`: shade from this line down to the line before it. */
+export type ChartLine = { name: string; x: number[]; y: number[]; hue?: number; dash?: string; faint?: boolean; quiet?: boolean; fill?: boolean; unlisted?: boolean };
 /** `range` and `dtick` fix an axis that should not autoscale, such as a filter gain in dB. */
 export type ChartAxis = { label: string; lines: ChartLine[]; range?: [number, number]; dtick?: number };
 export type ChartHeat = { y_label: string; z_label: string; z_min?: number; z_max?: number; x: number[]; y: number[]; z: number[][] };
-export type ChartSpec = { title: string; x_label: string; axes: ChartAxis[]; heatmap?: ChartHeat; slug?: string };
+/** `x_log`: a logarithmic x axis, as on a Bode plot. `stack`: the second axis is its own panel under the first, over the same x. */
+export type ChartSpec = { title: string; x_label: string; x_log?: boolean; stack?: boolean; axes: ChartAxis[]; heatmap?: ChartHeat; slug?: string };
 
 type SketchCell = { x: number; y: number; w: number; h: number; fill: string };
 
@@ -43,7 +42,7 @@ export function chartsFromTools(items: { name: string; output: string }[]): Char
     charts.forEach((chart, index) => { if (chart.slug) at.set(chart.slug, index); });
   };
   for (const item of items) {
-    if (item.name !== "show_chart" && item.name !== "show_spectrum" && item.name !== "show_spectrogram") continue;
+    if (item.name !== "show_chart" && item.name !== "show_spectrum" && item.name !== "show_spectrogram" && item.name !== "show_pid_response") continue;
     const card = chartCard(item.output);
     if (!card) continue;
     if (card.removed) {
@@ -154,11 +153,16 @@ function lineColor(line: ChartLine, index: number): string {
   return typeof line.hue === "number" ? COLORS[line.hue % COLORS.length] : COLORS[index % COLORS.length];
 }
 
+function shade(hex: string, alpha: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}
+
 function sketchLines(chart: ChartSpec): { color: string; points: string; dash?: string }[] {
   const width = 160;
   const height = 48;
   const pad = 3;
-  const axes = (chart.axes ?? []).map((axis) => axis.lines.map((line) => ({ line, points: coarsen(line.x, line.y, SKETCH_POINTS) })));
+  const axes = (chart.axes ?? []).map((axis) => axis.lines.filter((line) => !line.quiet).map((line) => ({ line, points: coarsen(line.x, line.y, SKETCH_POINTS) })));
   let x0 = Infinity;
   let x1 = -Infinity;
   for (const axis of axes) {
@@ -282,7 +286,7 @@ function inferno(t: number): string {
 }
 
 function chartIdentity(chart: ChartSpec): string {
-  const parts = [chart.slug ?? "", chart.title, chart.x_label];
+  const parts = [chart.slug ?? "", chart.title, chart.x_label, chart.x_log ? "log" : "", chart.stack ? "stack" : ""];
   const heat = chart.heatmap;
   if (heat) {
     const mid = heat.z[Math.floor(heat.z.length / 2)];
@@ -301,7 +305,7 @@ function chartIdentity(chart: ChartSpec): string {
 
 function chartCaption(chart: ChartSpec): string {
   const axes = (chart.axes ?? []).map((axis) => {
-    const names = axis.lines.map((line) => line.name).join(", ");
+    const names = axis.lines.filter((line) => !line.quiet).map((line) => line.name).join(", ");
     return axis.label ? `${axis.label}: ${names}` : names;
   });
   const heat = chart.heatmap ? `${chart.heatmap.y_label}, ${chart.heatmap.z_label}` : "";
@@ -309,43 +313,7 @@ function chartCaption(chart: ChartSpec): string {
 }
 
 export function ChartWindow({ chart, onClose, detached = false }: { chart: ChartSpec; onClose: () => void; detached?: boolean }) {
-  const t = useT();
-  const frame = useRef<HTMLDivElement>(null);
   const plot = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
-  const placed = useRef<{ left: string; top: string; width: string; height: string } | null>(null);
-  const [full, setFull] = useState(false);
-  function placeFull(on: boolean) {
-    const node = frame.current;
-    if (!node) return;
-    drag.current = null;
-    if (on) {
-      placed.current = { left: node.style.left, top: node.style.top, width: node.style.width, height: node.style.height };
-      node.style.left = "";
-      node.style.top = "";
-      node.style.width = "";
-      node.style.height = "";
-      setFull(true);
-      return;
-    }
-    const prev = placed.current;
-    const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
-    node.style.left = prev?.left ?? "";
-    node.style.top = prev?.top ? `${Math.max(topMin, parseFloat(prev.top) || topMin)}px` : "";
-    node.style.width = prev?.width ?? "";
-    node.style.height = prev?.height ?? "";
-    setFull(false);
-  }
-  useEffect(() => {
-    if (detached) return;
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") return;
-      if (full) placeFull(false);
-      else onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [full, onClose, detached]);
   const plotKey = chartIdentity(chart);
   useEffect(() => {
     const el = plot.current;
@@ -387,7 +355,7 @@ export function ChartWindow({ chart, onClose, detached = false }: { chart: Chart
         paper_bgcolor: "#14181d",
         plot_bgcolor: "#101418",
         font: { color: "#e8eef4", size: 12 },
-        xaxis: { title: { text: chart.x_label || "s" }, gridcolor: "#2a3140", zerolinecolor: "#2a3140" },
+        xaxis: { title: { text: chart.x_label || "s" }, gridcolor: "#2a3140", zerolinecolor: "#2a3140", ...(chart.x_log ? { type: "log" } : {}) },
         showlegend: (chart.axes ?? []).some((axis) => axis.lines.length > 0),
         legend: { orientation: "h", y: 1.14 },
         hovermode: hasHeat ? "closest" : "x unified",
@@ -418,20 +386,40 @@ export function ChartWindow({ chart, onClose, detached = false }: { chart: Chart
           hovertemplate: "%{y:.1f} Hz<br>%{x:.2f} s<br>%{z:.1f} dB<extra></extra>",
         });
       }
+      const stacked = Boolean(chart.stack) && !hasHeat && chart.axes.length === 2;
+      if (stacked) {
+        (layout.margin as { r: number }).r = 16;
+        (layout.xaxis as Record<string, unknown>).anchor = "y2";
+      }
       let color = 0;
       (chart.axes ?? []).forEach((axis, index) => {
         const key = index === 0 ? "yaxis" : `yaxis${index + 1}`;
         if (!(hasHeat && index === 0)) {
           layout[key] = {
             title: { text: axis.label },
-            gridcolor: index === 0 ? "#2a3140" : "transparent",
+            gridcolor: index === 0 || stacked ? "#2a3140" : "transparent",
             zerolinecolor: "#2a3140",
-            ...(index > 0 ? { overlaying: "y", side: "right" } : {}),
+            ...(stacked ? { domain: index === 0 ? [0.44, 1] : [0, 0.38] } : index > 0 ? { overlaying: "y", side: "right" } : {}),
             ...(axis.range ? { range: axis.range, autorange: false } : {}),
             ...(axis.dtick ? { dtick: axis.dtick } : {}),
           };
         }
         for (const line of axis.lines) {
+          if (line.quiet) {
+            data.push({
+              x: line.x,
+              y: line.y,
+              name: line.name,
+              type: "scatter",
+              mode: "lines",
+              yaxis: index === 0 ? "y" : "y2",
+              line: { width: 0 },
+              showlegend: false,
+              hoverinfo: "skip",
+              ...(line.fill ? { fill: "tonexty", fillcolor: shade(lineColor(line, color), 0.13) } : {}),
+            });
+            continue;
+          }
           data.push({
             x: line.x,
             y: line.y,
@@ -445,6 +433,7 @@ export function ChartWindow({ chart, onClose, detached = false }: { chart: Chart
               dash: line.dash || "solid",
             },
             ...(line.faint ? { opacity: 0.5 } : {}),
+            ...(line.unlisted ? { showlegend: false } : {}),
           });
           color += typeof line.hue === "number" ? 0 : 1;
         }
@@ -458,76 +447,16 @@ export function ChartWindow({ chart, onClose, detached = false }: { chart: Chart
       if (lib) lib.purge(el);
     };
   }, [plotKey]);
-  async function onDetach() {
-    if (await detachWindow("chart", chart, { title: chart.title || chartCaption(chart), key: chart.slug || chart.title || chartCaption(chart) })) onClose();
-  }
-  function onDrag(ev: ReactPointerEvent<HTMLElement>) {
-    if (full || detached) return;
-    if ((ev.target as HTMLElement).closest("button")) return;
-    const node = frame.current;
-    if (!node) return;
-    const rect = node.getBoundingClientRect();
-    drag.current = { x: ev.clientX, y: ev.clientY, left: rect.left, top: rect.top };
-    try {
-      ev.currentTarget.setPointerCapture(ev.pointerId);
-    } catch {
-      /* ignore invalid pointer id */
-    }
-  }
-  function onMove(ev: ReactPointerEvent<HTMLElement>) {
-    const start = drag.current;
-    const node = frame.current;
-    if (!start || !node) return;
-    const topMin = Math.max(8, parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--status-top")) || 0);
-    const maxLeft = Math.max(8, window.innerWidth - node.offsetWidth - 8);
-    const maxTop = Math.max(topMin, window.innerHeight - 44);
-    node.style.left = `${Math.min(maxLeft, Math.max(8, start.left + ev.clientX - start.x))}px`;
-    node.style.top = `${Math.min(maxTop, Math.max(topMin, start.top + ev.clientY - start.y))}px`;
-  }
-  const view = (
-      <div
-        className={detached ? "ai-chart-window detached" : full ? "ai-chart-window full" : "ai-chart-window"}
-        ref={frame}
-        role="dialog"
-        aria-label={chart.title || chartCaption(chart)}
-        onClick={(ev) => ev.stopPropagation()}
-      >
-        <header
-          onPointerDown={onDrag}
-          onPointerMove={onMove}
-          onPointerUp={() => { drag.current = null; }}
-          onPointerCancel={() => { drag.current = null; }}
-          onLostPointerCapture={() => { drag.current = null; }}
-        >
-          <b>{chart.title || chartCaption(chart)}</b>
-          {detached ? null : <DetachButton onDetach={() => void onDetach()} />}
-          {detached ? null : <button
-            type="button"
-            aria-pressed={full}
-            aria-label={full ? t("Exit full screen") : t("Full screen")}
-            title={full ? t("Exit full screen") : t("Full screen")}
-            onClick={() => placeFull(!full)}
-          >
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              {full ? (
-                <path d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              ) : (
-                <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              )}
-            </svg>
-          </button>}
-          <button type="button" aria-label={t("Close")} title={t("Close")} onClick={onClose}>
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path d="M3.2 3.2 12.8 12.8M12.8 3.2 3.2 12.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-            </svg>
-          </button>
-        </header>
-        <div className="ai-chart-plot"><div className="ai-chart-plot-inner" ref={plot} /></div>
-      </div>
-  );
-  if (detached) return view;
-  return createPortal(
-    <div className="ai-chart-back" onClick={onClose} role="presentation">{view}</div>,
-    document.body,
+  const title = chart.title || chartCaption(chart);
+  return (
+    <FloatWindow
+      title={title}
+      onClose={onClose}
+      detached={detached}
+      backdrop
+      detach={{ kind: "chart", payload: chart, title, key: chart.slug || title }}
+    >
+      <div className="ai-chart-plot"><div className="ai-chart-plot-inner" ref={plot} /></div>
+    </FloatWindow>
   );
 }

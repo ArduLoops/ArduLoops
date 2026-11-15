@@ -16,43 +16,38 @@ import { AuditLibrary } from "../components/AuditLibrary";
 import { ControllerView } from "../components/ControllerView";
 import { COPTER_WORKSPACES, WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
 import { MissionView } from "../components/MissionView";
+import { StudioWindowsHost } from "../components/StudioWindows";
+import { copterAxis, copterPick, setStudioFocus, useStudioFocus } from "../lib/studioFocus";
 
 const ScriptsLibrary = lazy(() => import("../components/ScriptsLibrary").then((mod) => ({ default: mod.ScriptsLibrary })));
 
-export function CopterApp({
+export function CopterApp({ log }: { log: LogRow[] }) {
+  return (
+    <>
+      <CopterWorkspaces log={log} />
+      <StudioWindowsHost frame="copter" />
+    </>
+  );
+}
+
+function CopterWorkspaces({
   log,
 }: {
   log: LogRow[];
 }) {
   const t = useT();
-  const [sel, setSel] = useState<string | null>(null);
-  const [axis, setAxis] = useState<Axis>("roll");
-  const [showAll, setShowAll] = useState(false);
+  // The selected card and axis are the app's, so the studio's panes in windows follow them (lib/studioFocus.ts).
+  const { sel, axis, showAll } = useStudioFocus();
+  const setShowAll = (on: boolean) => setStudioFocus({ showAll: on });
   const [workspace, setWorkspace] = useState<WorkspaceId>("loops");
   const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
 
   function onAxis(next: Axis) {
-    setAxis(next);
-    setSel((id) => {
-      if (next === "d") {
-        if (id?.startsWith("psc_d") || id === "pilot" || id === "nav" || id === "motors") return id;
-        return "psc_d_pos";
-      }
-      if (id?.startsWith("psc_d")) return "atc_rat";
-      return id;
-    });
+    copterAxis(next);
     addLog(t("Axis · {axis}", { axis: t(axisLabel(next)) }), "cmd");
   }
 
-  function onPick(next: string | null) {
-    setSel(next);
-    if (next?.startsWith("psc_d")) setAxis("d");
-    else if (next === "psc_ne_pos" || next === "psc_ne_vel" || next === "lean") {
-      setAxis((a) => (a === "d" || a === "yaw" ? "roll" : a));
-    } else if (next === "atc_ang" || next === "atc_rat") {
-      setAxis((a) => (a === "d" ? "roll" : a));
-    }
-  }
+  const onPick = copterPick;
 
   if (workspace === "mission") {
     return (

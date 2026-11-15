@@ -4,6 +4,8 @@ import { BoardWindow } from "./components/BoardDoc";
 import { ChartWindow, type ChartSpec } from "./components/FindingCharts";
 import { ImageViewerHost } from "./components/ImageViewer";
 import { LiveWindow, type LiveSpec } from "./components/LivePlots";
+import { FindingsWindow, type FindingsData } from "./components/LogFindings";
+import { StudioPaneWindow, type StudioPayload } from "./components/StudioWindows";
 import { useT } from "./i18n/i18n";
 import { seedLastBoardDoc, setBoardWindow, type BoardDocReply, type BoardTab } from "./lib/boardDoc";
 import { closeSelf, followMainWindow, onWindowMsg, postWindowMsg, readPayload, type Detached } from "./lib/detach";
@@ -58,6 +60,8 @@ export function DetachedRoot({ initial }: { initial: Detached }) {
   let body = null;
   if (cur.kind === "live") body = <LiveWindow detached spec={cur.payload as LiveSpec} onClose={close} />;
   else if (cur.kind === "chart") body = <ChartWindow detached chart={cur.payload as ChartSpec} onClose={close} />;
+  else if (cur.kind === "findings") body = <FindingsWindow detached data={cur.payload as FindingsData} onClose={close} />;
+  else if (cur.kind === "studio") body = <StudioPaneWindow detached {...(cur.payload as StudioPayload)} onClose={close} />;
   else if (cur.kind === "doc") {
     body = <DocWindow detached doc={cur.payload as DocPayload} onClose={close} />;
   } else if (cur.kind === "assistant") {
@@ -79,11 +83,13 @@ export function DetachedRoot({ initial }: { initial: Detached }) {
   return <VehicleView vehicle={vehicle}>{body}</VehicleView>;
 }
 
-function titleOf(cur: Detached, t: (key: string) => string): string {
+function titleOf(cur: Detached, t: (key: string, vars?: Record<string, string | number>) => string): string {
   const p = cur.payload as Record<string, unknown> | null;
   if (cur.kind === "live") return t("Live lines");
   if (cur.kind === "assistant") return t("Assistant");
   if (cur.kind === "chart") return typeof p?.title === "string" ? p.title : "";
+  if (cur.kind === "studio") return t(({ scheme: "Map", loop: "Loop", scope: "Scope" } as Record<string, string>)[String(p?.pane)] ?? "Scope");
+  if (cur.kind === "findings") return typeof p?.name === "string" ? t("Log {id} · flags and findings", { id: p.name }) : "";
   if (cur.kind === "doc") return typeof p?.title === "string" ? p.title : t("Document");
   const doc = p?.doc as BoardDocReply | null | undefined;
   return doc?.board || t("Board doc");

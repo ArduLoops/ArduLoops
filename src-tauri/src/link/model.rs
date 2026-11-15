@@ -66,6 +66,11 @@ pub struct LogBrief {
     pub start_utc: String,
     pub duration_us: u64,
     pub error: String,
+    /// `crate::dflog::head_hash` of the log's first bytes, read from the board. A copy on this computer
+    /// with the same head is this log even when the board lists another size for it, as the block
+    /// logger does. Empty when the head was not read.
+    #[serde(default)]
+    pub head_hash: String,
     #[serde(skip)]
     pub updated_at: f64,
 }
@@ -81,6 +86,9 @@ struct ActiveLogDownload {
     last_request: Instant,
     /// The byte range [start, end) of the last LOG_REQUEST_DATA.
     requested: (usize, usize),
+    /// The last chunk of that range has arrived. ArduPilot sends a range in order, so its transfer
+    /// is over then, even with chunks lost on the way.
+    tail_seen: bool,
     /// Bytes kept from the start. Zero means the whole file is being downloaded.
     peek_head: usize,
     peek_tail: usize,
@@ -134,6 +142,16 @@ impl MagCalSlot {
             autosaved: None,
         }
     }
+}
+
+/// One reason the board needs a reboot: `param` (a parameter ArduPilot reads at boot changed; `name`),
+/// `log_list` (the block logger cannot find where a log ends), or `vehicle` (the board said so; `text`).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RebootNeed {
+    pub kind: &'static str,
+    pub name: String,
+    pub text: String,
+    pub at: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -250,6 +268,9 @@ pub struct Sample {
     /// A reboot we sent is still waiting for the board to come back.
     #[serde(default)]
     pub rebooting: bool,
+    /// What this boot of the board waits on a reboot for. Cleared when the board boots again.
+    #[serde(default)]
+    pub reboot_needed: Vec<RebootNeed>,
     #[serde(skip)]
     pub telemetry: HashMap<String, serde_json::Value>,
     /// Numeric MAVLink fields seen on this link, keyed `MESSAGE.field`.
@@ -376,6 +397,7 @@ impl Sample {
             param_file: String::new(),
             heartbeat_at: 0.0,
             rebooting: false,
+            reboot_needed: Vec::new(),
             telemetry: HashMap::new(),
             live_nums: HashMap::new(),
             events: Vec::new(),
@@ -641,6 +663,8 @@ struct LinkState {
     ftp_capable: Option<bool>,
     /// The last PARAM_VALUE (or file value) stored.
     params_heard_at: Instant,
+    /// The largest time_boot_ms seen; a much smaller one is a new boot.
+    boot_ms: u32,
     /// When the one PARAM_REQUEST_LIST of the by-list fallback went out.
     params_list_at: Option<Instant>,
     /// Repeats of PARAM_REQUEST_LIST after a stream that left many gaps.
@@ -688,6 +712,7 @@ impl LinkState {
             params_file_tried: false,
             ftp_capable: None,
             params_heard_at: Instant::now(),
+            boot_ms: 0,
             params_list_at: None,
             params_list_tries: 0,
             params_file_retry_at: None,

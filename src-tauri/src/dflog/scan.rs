@@ -198,6 +198,33 @@ fn stored_params(hash: &str) -> Option<BTreeMap<String, f64>> {
 }
 
 /// The content key of a stored log: the hash in its name, or the hash of its bytes.
+/// How much of a log's start `head_hash` reads: formats, parameters and the first messages, which
+/// differ between flights.
+pub const HEAD_HASH_BYTES: usize = 64 * 1024;
+
+/// SHA-256 of a log's first HEAD_HASH_BYTES (or all of a shorter log), as 16 hex digits.
+pub fn head_hash(head: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(&head[..head.len().min(HEAD_HASH_BYTES)]);
+    hex_prefix(&digest.finalize())
+}
+
+/// `head_hash` of a stored log, read from its first bytes.
+fn file_head_hash(id: &str) -> Option<String> {
+    use std::io::Read;
+    let mut file = fs::File::open(resolve(id).ok()?).ok()?;
+    let mut head = vec![0u8; HEAD_HASH_BYTES];
+    let mut got = 0;
+    while got < head.len() {
+        let n = file.read(&mut head[got..]).ok()?;
+        if n == 0 {
+            break;
+        }
+        got += n;
+    }
+    Some(head_hash(&head[..got]))
+}
+
 fn content_hash(id: &str, fact: &Value) -> Option<String> {
     let name = id.rsplit(['/', '\\']).next().unwrap_or(id);
     let head = name.get(..16).unwrap_or("");
@@ -246,6 +273,7 @@ pub fn scan_log(id: &str) -> Value {
         }
         let _ = fs::write(facts_path(), Value::Object(facts).to_string());
     }
+    queue_findings(id);
     json!({ "ok": true, "id": id, "hash": hash, "scan": scan })
 }
 
@@ -293,15 +321,23 @@ pub fn local_logs() -> Value {
         if hash.is_some() && fact["hash"].is_null() && !is_hex16(id.rsplit('/').next().unwrap_or("").get(..16).unwrap_or("")) {
             hashed = true;
         }
+        let head = fact["head_hash"].as_str().map(str::to_string).or_else(|| {
+            hashed = true;
+            file_head_hash(&id)
+        });
         let scan = fact.get("scan").filter(|s| s["version"].as_u64() == Some(SCAN_VERSION)).cloned().unwrap_or(Value::Null);
         let (star, note, updated) = hash.as_ref().and_then(|h| notes.get(h)).cloned().unwrap_or((false, String::new(), 0));
+        let (findings, findings_pending) = findings_row(&id, hash.as_deref(), scan.is_object());
         if let Some(obj) = row.as_object_mut() {
             obj.insert("hash".into(), json!(hash));
+            obj.insert("head_hash".into(), json!(head));
             obj.insert("vehicle".into(), json!(id.split('/').next().unwrap_or("")));
             obj.insert("scan".into(), scan);
             obj.insert("star".into(), json!(star));
             obj.insert("note".into(), json!(note));
             obj.insert("note_at".into(), json!(updated));
+            obj.insert("findings".into(), findings);
+            obj.insert("findings_pending".into(), json!(findings_pending));
         }
     }
     if hashed {
@@ -312,6 +348,11 @@ pub fn local_logs() -> Value {
             if let (Some(id), Some(hash)) = (row["id"].as_str(), row["hash"].as_str()) {
                 if let Some(obj) = fresh.get_mut(id).and_then(Value::as_object_mut) {
                     obj.entry("hash").or_insert(json!(hash));
+                }
+            }
+            if let (Some(id), Some(head)) = (row["id"].as_str(), row["head_hash"].as_str()) {
+                if let Some(obj) = fresh.get_mut(id).and_then(Value::as_object_mut) {
+                    obj.entry("head_hash").or_insert(json!(head));
                 }
             }
         }

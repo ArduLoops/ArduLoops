@@ -247,6 +247,9 @@ fn system_prompt(lang: &str, sample: &Sample, bench: bool, log_id: &str, earlier
         if !note.is_empty() {
             log = format!("{log} {note}");
         }
+        if let Some(results) = crate::dflog::findings_context(log_id) {
+            log = format!("{log}\n\n{}", xml_block("log_tool_results", &results));
+        }
     }
     let vehicle = if !sample.ok {
         match crate::db::latest_params() {

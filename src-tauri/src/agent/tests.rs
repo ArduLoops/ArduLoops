@@ -1057,7 +1057,7 @@ mod eval_dump {
     /// Tools that only read a local log or the bundled docs. Everything else answers as if no vehicle is linked.
     fn eval_reads(name: &str) -> bool {
         name == "list_logs" || name.starts_with("log_") || name == "param_doc" || name == "ardupilot_doc"
-            || name == "show_chart" || name == "show_spectrum" || name == "show_spectrogram" || name == "suggest_next"
+            || name == "show_chart" || name == "show_spectrum" || name == "show_spectrogram" || name == "show_pid_response" || name == "suggest_next"
     }
 
     /// Local log tools over stdin for arduloops-api/eval/diagnose.ts. Run with LOCALAPPDATA set to a scratch dir.
@@ -1115,5 +1115,44 @@ mod eval_dump {
             "tools": tool_schema(),
         });
         std::fs::write(out, serde_json::to_string_pretty(&body).unwrap()).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tool_guard_tests {
+    use super::guard_tool;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn a_tool_that_returns_is_passed_through() {
+        assert_eq!(guard_tool(|| json!({ "ok": true, "value": 3 })), json!({ "ok": true, "value": 3 }));
+        assert_eq!(guard_tool(|| json!("text")), json!("text"));
+    }
+
+    #[test]
+    fn a_tool_that_panics_answers_with_an_error() {
+        let out = guard_tool(|| panic!("boom {}", 7));
+        assert_eq!(out["ok"], json!(false));
+        assert_eq!(out["error"], json!("tool_failed"));
+        assert_eq!(out["detail"], json!("boom 7"));
+        assert!(out["note"].as_str().unwrap().contains("not a finding"));
+
+        // A fixed message, and a failure raised by the language itself: an index past the end.
+        assert_eq!(guard_tool(|| panic!("fixed"))["detail"], json!("fixed"));
+        let rows: Vec<u8> = Vec::new();
+        let at = rows.len() + 3;
+        let out = guard_tool(|| json!(rows[at]));
+        assert_eq!(out["error"], json!("tool_failed"));
+        assert!(out["detail"].as_str().unwrap().contains("index out of bounds"), "{out}");
+
+        // A payload that is not text still answers.
+        let out = guard_tool(|| -> Value { std::panic::panic_any(42u8) });
+        assert_eq!(out["detail"], json!("no detail"));
+    }
+
+    #[test]
+    fn the_next_tool_runs_after_one_failed() {
+        let _ = guard_tool(|| panic!("first"));
+        assert_eq!(guard_tool(|| json!({ "ok": true })), json!({ "ok": true }));
     }
 }

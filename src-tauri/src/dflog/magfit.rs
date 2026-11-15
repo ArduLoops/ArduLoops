@@ -327,7 +327,7 @@ pub fn magfit_bytes(
     let mut parms: BTreeMap<String, f64> = BTreeMap::new();
 
     let mut incomplete = false;
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &["PARM", "ORGN", "POS", "GPS"], |fmt, _, values| {
         if fmt.name == "PARM" {
             if let (Some(name), Some(val)) = (field_str(fmt, values, "Name"), field_f64(fmt, values, "Value")) {
                 parms.insert(name.clone(), val);
@@ -430,7 +430,7 @@ pub fn magfit_bytes(
     let mut att_samples: Vec<AttSample> = Vec::new();
     let has_ahr2 = formats.values().any(|fmt| fmt.name == "AHR2");
 
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &["AHR2", "ATT", "XKF1"], |fmt, _, values| {
         let is_att = if has_ahr2 { fmt.name == "AHR2" } else { fmt.name == "ATT" || fmt.name == "XKF1" };
         if !is_att {
             return;
@@ -474,7 +474,7 @@ pub fn magfit_bytes(
     let use_mot = motor_comp.eq_ignore_ascii_case("current") || motor_comp.eq_ignore_ascii_case("throttle");
     let is_curr = motor_comp.eq_ignore_ascii_case("current");
 
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &["BAT", "RATE", "CTUN"], |fmt, _, values| {
         if fmt.name == "BAT" {
             if let (Some(us), Some(curr)) = (time_us(fmt, values), field_f64(fmt, values, "Curr")) {
                 if curr > max_curr {
@@ -511,7 +511,7 @@ pub fn magfit_bytes(
     let mut last_mag_us = 0u64;
     let bins = compute_fibonacci_bins();
 
-    walk(bytes, &formats, |fmt, _, values| {
+    walk_only(bytes, &formats, &[target_msg_name.as_str()], |fmt, _, values| {
         if fmt.name != target_msg_name {
             return;
         }

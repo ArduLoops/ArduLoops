@@ -9,3 +9,7 @@ scripts/test_firmware.py
 # Local Rust test build output
 target-codex-test/
 target-codex-release/
+# Local tool settings
+.claude/
+.env
+.env.*

@@ -63,6 +63,7 @@ export function LinkChip({
   armed,
   live,
   shell,
+  away = false,
   sitl,
   sourceKnown,
   kind,
@@ -83,6 +84,8 @@ export function LinkChip({
   armed: boolean;
   live: Frame | null;
   shell: "home" | Frame;
+  /** A board screen is open (saved, or the one on the link), not the live vehicle view. */
+  away?: boolean;
   sitl: boolean;
   sourceKnown: boolean;
   kind: LinkKind;
@@ -114,7 +117,7 @@ export function LinkChip({
   );
 
   const state: ChipState = linked
-    ? live && shell !== "home" && shell !== live
+    ? live && (away || (shell !== "home" && shell !== live))
       ? "other"
       : "on"
     : rebooting || isBootDetail(detail)
@@ -184,20 +187,21 @@ export function LinkChip({
 
   let label: ReactNode;
   let action: { text: string; run: () => void } | null = null;
+  // The vehicle on the link is named by its board when it has a name; the frame word is the fallback.
+  const who = name || (live ? t(live) : "");
   if (state === "on") {
     label = (
       <>
-        {live ? <span className="lc-frame">{t(live)}</span> : null}
-        {name ? <span className="lc-name" title={name}>{name}</span> : null}
+        {name ? <span className="lc-name" title={name}>{name}</span> : live ? <span className="lc-frame">{t(live)}</span> : null}
         {tel.hz ? <span className="lc-hz">{tel.hz} Hz</span> : null}
         {!live && !name && !tel.hz ? <span>{t("Linked")}</span> : null}
       </>
     );
     // On Home the vehicle on the link is one click away.
-    if (live && shell === "home") action = { text: t("Open {frame}", { frame: t(live) }), run: () => onShowFrame(live) };
+    if (live && shell === "home") action = { text: t("Open {frame}", { frame: who }), run: () => onShowFrame(live) };
   } else if (state === "other" && live) {
-    label = <span>{t("{frame} on link", { frame: t(live) })}</span>;
-    action = { text: t("Show {frame}", { frame: t(live) }), run: () => onShowFrame(live) };
+    label = <span title={name || undefined}>{t("{frame} on link", { frame: who })}</span>;
+    action = { text: t("Show"), run: () => onShowFrame(live) };
   } else if (state === "wait") {
     label = <span>{t("Waiting HEARTBEAT")}</span>;
   } else if (state === "boot") {
@@ -220,7 +224,7 @@ export function LinkChip({
           : state === "bad"
             ? t("No link")
             : t("Not linked");
-  const sub = state === "on" || state === "other" ? detail || url : state === "off" ? url : tDetail(detail);
+  const sub = state === "on" || state === "other" ? [live ? t(live) : "", detail || url].filter(Boolean).join(" · ") : state === "off" ? url : tDetail(detail);
 
   return (
     <>
@@ -296,7 +300,7 @@ export function LinkChip({
                     </div>
                   </div>
                 ) : null}
-                {live && linked && shell !== live ? (
+                {live && linked && (shell !== live || away) ? (
                   <button type="button" className="lc-wide" onClick={() => { onShowFrame(live); setOpen(false); }}>
                     {state === "other" ? t("Show {frame}", { frame: t(live) }) : t("Open {frame} view", { frame: t(live) })}
                   </button>
