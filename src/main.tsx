@@ -4,6 +4,7 @@ import { App } from "./App";
 import { DetachedRoot } from "./Detached";
 import { announceMainWindow, detachedFromUrl, isDetachedWindow } from "./lib/detach";
 import { applyDocumentLang } from "./i18n/i18n";
+import { startNavMemory } from "./lib/nav";
 import "./styles.css";
 
 applyDocumentLang();
@@ -29,7 +30,11 @@ if (typeof window !== "undefined") {
 
 // A panel moved into its own window loads this same page with #detached=… and renders only that panel.
 const detached = detachedFromUrl();
-if (!detached) announceMainWindow();
+if (!detached) {
+  announceMainWindow();
+  // Before the first render: a bare URL opens on the last place (lib/nav.ts).
+  startNavMemory();
+}
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

@@ -17,7 +17,7 @@ import { ControllerView } from "./components/ControllerView";
 import { usePhone } from "./lib/phone";
 import { useT } from "./i18n/i18n";
 import { externalPage, openExternal } from "./lib/open";
-import { followDetachedNav, followOsLinks, navigate, navHref, openAppLink, useNavParam } from "./lib/nav";
+import { dropRestoredBoard, followDetachedNav, followOsLinks, navigate, navHref, openAppLink, useNavParam } from "./lib/nav";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
 import { APP_HTTP, formatLink, loadLink, loadLinkHistory, parseLink, rememberLink, saveLink, type LinkKind } from "./mav/link";
@@ -242,7 +242,12 @@ export function App() {
   const board = useNavParam("board");
   const [boards, setBoards] = useState<BoardRow[]>([]);
   const refreshBoards = useCallback(() => {
-    void fetchBoards().then(setBoards).catch(() => {});
+    void fetchBoards()
+      .then((rows) => {
+        setBoards(rows);
+        dropRestoredBoard(rows.map((row) => row.key));
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => {
     refreshBoards();

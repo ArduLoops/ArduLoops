@@ -85,7 +85,94 @@ export function navigate(patch: Nav, opts: { replace?: boolean } = {}): void {
   if (url.href === window.location.href) return;
   if (opts.replace) window.history.replaceState(window.history.state, "", url);
   else window.history.pushState(null, "", url);
+  saveLastPlace();
   window.dispatchEvent(new Event(NAV_EVENT));
+}
+
+/*
+ * The last place, for the next cold start: frame, workspace, Controller pane and an open board. Not the Setup step:
+ * a restart should not land in the middle of a calibration.
+ */
+const PLACE_KEY = "arduloops.nav.v1";
+const PLACE_FRAMES = ["home", "copter", "plane"];
+const PLACE_WS = ["loops", "controller", "mission", "lua", "audit"];
+const PLACE_PANES = ["setup", "logs", "params", "firmware", "chats"];
+type Place = { frame?: string; ws?: string; pane?: string; board?: string };
+
+/** The board a cold start put back, until the board list says whether it still exists (`dropRestoredBoard`). */
+let restoredBoard: string | null = null;
+
+/** Keeps only values a screen can show; anything else is left out, so that level opens on its default. */
+function cleanPlace(raw: unknown): Place {
+  if (!raw || typeof raw !== "object") return {};
+  const r = raw as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  const out: Place = {};
+  const frame = str(r.frame);
+  if (frame && PLACE_FRAMES.includes(frame)) out.frame = frame;
+  const ws = str(r.ws) ? wsParam(WS_ID[str(r.ws)!] ?? str(r.ws)!) : undefined;
+  if (out.frame && out.frame !== "home" && ws && PLACE_WS.includes(ws)) out.ws = ws;
+  const pane = str(r.pane);
+  if (out.ws === "controller" && pane && PLACE_PANES.includes(pane)) out.pane = pane;
+  const board = str(r.board);
+  if (board && board.length <= 200) out.board = board;
+  return out;
+}
+
+function writePlace(place: Place): void {
+  try {
+    localStorage.setItem(PLACE_KEY, JSON.stringify(place));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function saveLastPlace(): void {
+  if (isDetachedWindow()) return;
+  const q = search();
+  writePlace(cleanPlace({ frame: q.get("frame"), ws: q.get("ws"), pane: q.get("pane"), board: q.get("board") }));
+}
+
+function loadPlace(): Place {
+  try {
+    return cleanPlace(JSON.parse(localStorage.getItem(PLACE_KEY) || "{}"));
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Main window, before the first render. A URL without nav params opens on the last place (replaceState, so Back
+ * does not step to an empty Home). A URL with params, and a deep link that arrives later, win over it.
+ * Back and Forward also update the saved place.
+ */
+export function startNavMemory(): void {
+  if (typeof window === "undefined" || isDetachedWindow()) return;
+  window.addEventListener("popstate", saveLastPlace);
+  const q = search();
+  if (NAV_KEYS.some((key) => q.has(key))) {
+    saveLastPlace();
+    return;
+  }
+  const place = loadPlace();
+  // A stored value that no longer passes is replaced by what is kept.
+  writePlace(place);
+  if (!Object.keys(place).length) return;
+  const url = new URL(window.location.href);
+  for (const key of ["frame", "ws", "pane", "board"] as const) {
+    const v = place[key];
+    if (v) url.searchParams.set(key, v);
+  }
+  window.history.replaceState(window.history.state, "", url);
+  restoredBoard = place.board ?? null;
+}
+
+/** The board list arrived: a restored board that is no longer in it closes, and the saved place forgets it. */
+export function dropRestoredBoard(known: readonly string[]): void {
+  const board = restoredBoard;
+  restoredBoard = null;
+  if (!board || known.includes(board) || readNavParam("board") !== board) return;
+  navigate({ board: null }, { replace: true });
 }
 
 /** A relative href for a place, for an `<a>` that also works with a middle click. */
