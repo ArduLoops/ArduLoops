@@ -18,7 +18,7 @@
   .controls-toggle {
     flex: none; display: flex; align-items: center; gap: 8px;
     width: 100%; margin: 8px 0 0; padding: 8px 10px;
-    background: #0c0e11; color: var(--dim); border-radius: 8px;
+    background: var(--sunk); color: var(--dim); border-radius: 8px;
     font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; text-align: left;
   }
   .controls-toggle::before {
@@ -41,7 +41,7 @@
     gap: 8px; align-items: stretch; margin: 6px 0 0; }
   .flight select {
     width: 100%; min-width: 0; appearance: none; -webkit-appearance: none;
-    background: #0c0e11 url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='%238b98a8' d='M1 1l5 5 5-5'/></svg>") no-repeat right 10px center;
+    background: var(--sunk) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='%238b98a8' d='M1 1l5 5 5-5'/></svg>") no-repeat right 10px center;
     color: var(--ink); border: 0; border-radius: 8px; padding: 7px 28px 7px 10px;
     font: inherit; font-size: 12px; font-weight: 650; letter-spacing: 0.02em; cursor: pointer;
   }
@@ -49,12 +49,12 @@
   .arm-sw { margin: 0; min-width: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
     text-transform: uppercase; }
   .arm-sw.on { background: #6b2424; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.2); }
-  .stick { position: relative; height: 96px; background: #0c0e11; border-radius: 10px;
+  .stick { position: relative; height: 96px; background: var(--sunk); border-radius: 10px;
     touch-action: none; user-select: none; cursor: grab; overflow: hidden; }
   .stick:active { cursor: grabbing; }
-  .stick .cross { position: absolute; inset: 18px; border: 1px dashed #2a333c; border-radius: 8px;
+  .stick .cross { position: absolute; inset: 18px; border: 1px dashed var(--line); border-radius: 8px;
     pointer-events: none; }
-  .stick .cross::before, .stick .cross::after { content: ""; position: absolute; background: #2a333c; }
+  .stick .cross::before, .stick .cross::after { content: ""; position: absolute; background: var(--line); }
   .stick .cross::before { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-50%); }
   .stick .cross::after { top: 50%; left: 0; right: 0; height: 1px; transform: translateY(-50%); }
   .stick .knob { position: absolute; width: 26px; height: 26px; border-radius: 50%;
@@ -84,18 +84,18 @@
     overflow: hidden; }
   .btns { flex: none; }
   /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
-  button:where(.arm-sw.on):disabled:hover { background: #2a3140; }
+  button:where(.arm-sw.on):disabled:hover { background: var(--btn); }
   .sliders { flex: none; margin: 2px 0 8px; }
   .tune-empty { flex: none; margin: 4px 0 8px; font-size: 12px; color: var(--dim); }
   .log-label { color: var(--dim); font-size: 11px; letter-spacing: 0.04em;
     text-transform: uppercase; margin: 4px 0 6px; flex: none; }
-  .log { flex: 1 1 88px; height: auto; min-height: 88px; overflow-y: auto; background: #0c0e11;
+  .log { flex: 1 1 88px; height: auto; min-height: 88px; overflow-y: auto; background: var(--sunk);
     border-radius: 8px; padding: 8px 10px; color: var(--dim);
     font: 11.5px/1.45 "Cascadia Mono", Consolas, ui-monospace, monospace; }
   /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
-  button:where(.log):hover { background: #364054; }
-  button:where(.log):disabled:hover { background: #2a3140; }
-  button:where(.log).cyan { background: #15516a; }
+  button:where(.log):hover { background: var(--btn-hover); }
+  button:where(.log):disabled:hover { background: var(--btn); }
+  button:where(.log).cyan { background: var(--cyan-fill); }
   button:where(.log).amber { background: #6a4a12; }
   button:where(.log).hot { background: #6b2424; }
   .log .row { display: flex; gap: 8px; align-items: baseline; min-width: 0; }

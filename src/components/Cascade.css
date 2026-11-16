@@ -7,22 +7,22 @@
   .map-sw.on { box-shadow: none; filter: none; color: var(--ink); }
   .map-sw.hot { color: var(--hot); }
   .map-sw .track { position: relative; width: 28px; height: 16px; border-radius: 99px;
-    background: #2a333c; flex: none; }
-  .map-sw.on .track { background: #15516a; }
+    background: var(--line); flex: none; }
+  .map-sw.on .track { background: var(--cyan-fill); }
   .map-sw .track::after { content: ""; position: absolute; top: 2px; left: 2px;
-    width: 12px; height: 12px; border-radius: 50%; background: #8b98a8; }
+    width: 12px; height: 12px; border-radius: 50%; background: var(--dim); }
   .map-sw.on .track::after { left: 14px; background: var(--cyan); }
   .map-sw.on.hot { color: var(--hot); }
   .map-sw.on.hot .track { background: #5a2222; }
   .map-sw.on.hot .track::after { background: var(--hot); }
-  .cmap { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #0c0e11; border-radius: 10px;
+  .cmap { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--sunk); border-radius: 10px;
     padding: 10px 12px 10px 8px; display: flex; flex-direction: column; }
   .cmap-fit { flex: 1; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
   .cmap-shell { position: relative; flex: none; }
   .cmap-inner { position: absolute; left: 0; top: 0; transform-origin: top left; }
   .frames { flex: none; margin-top: auto; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
     grid-template-areas: "a b c" "h h h"; }
-  .frame { background: #0c0e11; border-radius: 8px; padding: 4px 6px 2px; min-width: 0;
+  .frame { background: var(--sunk); border-radius: 8px; padding: 4px 6px 2px; min-width: 0;
     border: 1px solid transparent; }
   .frame .cap { display: block; font-size: 10px; color: var(--dim); letter-spacing: 0.02em; }
   .frame svg { width: 100%; height: 72px; display: block; }
@@ -31,8 +31,8 @@
   .frame.on.wool { border-color: var(--wool); }
   .frame-hint { grid-area: h; margin: 0; font-size: 11px; color: var(--dim); line-height: 1.35; }
   .cmap-edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: visible; }
-  .cnode { position: absolute; z-index: 1; margin: 0; padding: 6px 8px; text-align: left; background: #1a1e24;
-    border-radius: 6px; border: 1px solid #2a333c; }
+  .cnode { position: absolute; z-index: 1; margin: 0; padding: 6px 8px; text-align: left; background: var(--panel);
+    border-radius: 6px; border: 1px solid var(--line); }
   .cnode:hover { background: #222830; }
   .cnode:focus,
   .cnode:focus-visible { outline: none; }
@@ -113,9 +113,9 @@
     box-shadow: none; filter: none;
   }
   /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
-  button:where(.map-sw):disabled:hover { background: #2a3140; }
+  button:where(.map-sw):disabled:hover { background: var(--btn); }
   button:where(.map-sw).hot { background: #6b2424; }
-  button:where(.cband):hover { background: #364054; }
+  button:where(.cband):hover { background: var(--btn-hover); }
   .cband.outer:hover { background: rgba(255, 183, 77, 0.14); }
   .cband.inner:hover { background: rgba(79, 195, 247, 0.14); }
   .cband.sel.outer { background: rgba(255, 183, 77, 0.16); }

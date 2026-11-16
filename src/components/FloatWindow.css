@@ -1,6 +1,6 @@
 @layer components {
   .float-grip { position: absolute; right: 1px; bottom: 1px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; cursor: nwse-resize; touch-action: none; }
-  .float-grip path { fill: none; stroke: #5a6778; stroke-width: 1.3; stroke-linecap: round; }
+  .float-grip path { fill: none; stroke: var(--faint); stroke-width: 1.3; stroke-linecap: round; }
   /* The log findings window (LogFindings.tsx), a FloatWindow. */
   .float-win.findings { width: min(720px, calc(100vw - 16px)); height: min(620px, calc(100dvh - max(var(--status-top, 0px), 16px) - 24px)); left: max(8px, calc(50% - 360px)); top: max(var(--status-top, 0px), 64px); }
   /* A studio pane in a floating window (StudioWindows.tsx). */
@@ -10,10 +10,10 @@
   .float-win.studio-scope { left: auto; right: 12px; top: max(var(--status-top, 0px), 120px); }
   .studio-win header .axis-sw { margin: 0 6px 0 auto; }
   .float-win header .axis-sw button { width: auto; height: 24px; padding: 2px 8px; display: inline-block; color: var(--dim); }
-  .float-win header .axis-sw button.on { color: var(--ink); background: #0c0e11; }
-  .float-back { position: fixed; inset: 0; z-index: 45; background: rgba(0, 0, 0, 0.35); }
+  .float-win header .axis-sw button.on { color: var(--ink); background: var(--sunk); }
+  .float-back { position: fixed; inset: 0; z-index: var(--z-sheet); background: rgba(0, 0, 0, 0.35); }
   /* A window without a backdrop floats over the app and leaves it usable. */
-  .float-win.modeless { position: fixed; z-index: 42; }
+  .float-win.modeless { position: fixed; z-index: var(--z-window); }
   .float-win {
     position: absolute;
     left: max(8px, calc(50% - 410px));
@@ -25,12 +25,12 @@
     max-width: calc(100vw - 16px);
     max-height: calc(100dvh - max(var(--status-top, 0px), 16px) - 16px - env(safe-area-inset-bottom, 0px));
     display: flex; flex-direction: column;
-    border-radius: 14px; background: #14181d; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), inset 0 0 0 1px #2a3140;
+    border-radius: 14px; background: #14181d; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), inset 0 0 0 1px var(--btn);
     box-sizing: border-box;
   }
   .float-win.live {
     position: fixed;
-    z-index: 42;
+    z-index: var(--z-window);
     width: min(480px, calc(100vw - 16px));
     height: min(860px, calc(100dvh - max(var(--status-top, 0px), 16px) - 24px - env(safe-area-inset-bottom, 0px)));
     max-width: calc(100vw - 16px);
@@ -67,7 +67,7 @@
     display: grid; place-items: center; background: transparent; color: var(--dim); border-radius: 8px;
     touch-action: auto;
   }
-  .float-win header button:hover { background: #2a3140; color: var(--ink); }
+  .float-win header button:hover { background: var(--btn); color: var(--ink); }
   @media (max-width: 768px) {
     .float-win {
       left: 8px;

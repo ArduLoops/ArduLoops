@@ -11,7 +11,7 @@
   .param-line label { min-width: 0; }
   .param-line code { display: block; color: var(--cyan); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .param-line small { display: block; color: var(--dim); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .param-line input { box-sizing: border-box; width: 100%; height: 24px; margin: 0; padding: 0 6px; border: 1px solid #2a333c; border-radius: 5px; background: #111722; color: var(--ink); font: inherit; font-size: 12px; }
+  .param-line input { box-sizing: border-box; width: 100%; height: 24px; margin: 0; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: #111722; color: var(--ink); font: inherit; font-size: 12px; }
   .param-line button { margin: 0; padding: 2px 8px; font-size: 11px; }
   .param-status { grid-column: 1 / -1; color: var(--cyan); font-size: 11px; }
   @media (max-width: 680px) {

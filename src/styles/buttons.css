@@ -3,13 +3,13 @@
    small button:where(...) rule that keeps the old look. */
 
 @layer buttons {
-  button { background: #2a3140; color: var(--ink); border: 0; border-radius: 8px;
+  button { background: var(--btn); color: var(--ink); border: 0; border-radius: 8px;
     padding: 7px 10px; margin: 0 6px 8px 0; cursor: pointer; }
-  button:hover { background: #364054; }
+  button:hover { background: var(--btn-hover); }
   button:disabled { opacity: 0.55; cursor: default; }
-  button:disabled:hover { background: #2a3140; }
+  button:disabled:hover { background: var(--btn); }
   button.on { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35); filter: brightness(1.12); }
-  button.cyan { background: #15516a; }
+  button.cyan { background: var(--cyan-fill); }
   button.amber { background: #6a4a12; }
   button.hot { background: #6b2424; }
 }

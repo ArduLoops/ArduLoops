@@ -3,7 +3,7 @@
   .ai-chart-card {
     display: flex; flex-direction: column; flex: 1 1 220px; width: auto; min-width: min(100%, 220px); max-width: 100%;
     height: auto; margin: 0; padding: 8px 10px 8px; overflow: hidden; text-align: left;
-    border-radius: 12px; background: #14181d; color: var(--ink); box-shadow: inset 0 0 0 1px #2a3140; cursor: pointer;
+    border-radius: 12px; background: #14181d; color: var(--ink); box-shadow: inset 0 0 0 1px var(--btn); cursor: pointer;
   }
   .ai-chart-card b, .ai-chart-card span { display: block; min-width: 0; }
   .ai-chart-card b {
@@ -17,11 +17,11 @@
     text-align: left; cursor: pointer; border-radius: 8px;
   }
   /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
-  button:where(.ai-chart-card, .ai-live-open):hover { background: #364054; }
+  button:where(.ai-chart-card, .ai-live-open):hover { background: var(--btn-hover); }
   .ai-live-open b { font-size: 12px; font-weight: 600; }
   .ai-live-row {
     display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 6px 10px 6px;
-    border-top: 1px solid #2a3140;
+    border-top: 1px solid var(--btn);
   }
   .ai-live-row input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--cyan); }
   .ai-live-row button {
@@ -35,5 +35,5 @@
   }
   .ai-live-row.off button b, .ai-live-row.off button span { color: var(--dim); }
   .ai-live-empty { margin: 0; padding: 16px; color: var(--dim); font-size: 13px; }
-  .ai-live-plots { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0c0e11; }
+  .ai-live-plots { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--sunk); }
 }

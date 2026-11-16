@@ -1,5 +1,5 @@
 @layer components {
-  .craft { flex: none; background: #0c0e11; border-radius: 10px; margin: 0;
+  .craft { flex: none; background: var(--sunk); border-radius: 10px; margin: 0;
     overflow: hidden; position: relative; }
   .craft-bg { position: relative; }
   .craft-bg svg { display: block; width: 100%; height: auto; }
@@ -14,7 +14,7 @@
   .craft-cams button {
     appearance: none; cursor: pointer;
     background: rgba(12, 14, 17, 0.72); border: 1px solid #3a4650;
-    color: #8b98a8; font-size: 9px; letter-spacing: 0.04em;
+    color: var(--dim); font-size: 9px; letter-spacing: 0.04em;
     text-transform: uppercase; padding: 2px 6px; border-radius: 4px;
   }
   .craft-cams button.on { color: var(--cyan); border-color: var(--cyan); }
@@ -100,7 +100,7 @@
   .craft.idle .craft-batt em,
   .craft.idle .craft-batt span { color: var(--dim); }
   /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
-  button:where(.craft-cams button):hover { background: #364054; }
+  button:where(.craft-cams button):hover { background: var(--btn-hover); }
   @keyframes craft-ticker {
     0%, 5% { transform: translateX(0); }
     100% { transform: translateX(var(--shift, 0px)); }

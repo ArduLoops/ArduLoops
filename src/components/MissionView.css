@@ -2,7 +2,7 @@
   .mission-acts { margin-left: auto; display: flex; gap: 6px; flex: none; }
   .mission-acts button { margin: 0; padding: 2px 8px; font-size: 12px; line-height: 16px; }
   .mission-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 8px; }
-  .mission-map { position: relative; min-height: 0; background: #0c0e11; border-radius: 8px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .mission-map { position: relative; min-height: 0; background: var(--sunk); border-radius: 8px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
   .mission-map svg { display: block; width: 100%; height: 100%; cursor: crosshair; user-select: none; -webkit-user-select: none; }
   body.mission-drag, body.mission-drag * { user-select: none; -webkit-user-select: none; }
   .mission-fit { position: absolute; top: 8px; right: 8px; margin: 0; padding: 2px 8px; font-size: 12px; line-height: 16px; }
@@ -23,7 +23,7 @@
   .mission-side { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--dim); }
   .mission-side label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .mission-side input[type="number"] {
-    width: 5.2em; background: #0c0e11; color: var(--ink); border: 0; border-radius: 6px; padding: 3px 6px;
+    width: 5.2em; background: var(--sunk); color: var(--ink); border: 0; border-radius: 6px; padding: 3px 6px;
   }
   .mission-rtl { justify-content: flex-start; }
   .mission-presets, .mission-pts-head { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }

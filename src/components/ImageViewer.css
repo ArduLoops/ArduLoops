@@ -1,7 +1,7 @@
 @layer components {
   /* Full-screen image view: above the windows and the assistant. */
-  .iv { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: rgba(8, 10, 12, 0.94); padding-top: var(--status-top, 0px); }
-  .iv-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #222a36; color: var(--ink); }
+  .iv { position: fixed; inset: 0; z-index: var(--z-viewer); display: flex; flex-direction: column; background: rgba(8, 10, 12, 0.94); padding-top: var(--status-top, 0px); }
+  .iv-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); color: var(--ink); }
   .iv-bar .mw-icon { flex: none; color: var(--ink); font-size: 16px; }
   .iv-title { min-width: 0; font-size: 13px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .iv-count, .iv-pct { flex: none; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -17,5 +17,5 @@
     .iv-bar .frs-btn, .iv-bar .bd-ext { display: none; }
   }
   /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
-  button:where(.iv-nav):hover { background: #364054; }
+  button:where(.iv-nav):hover { background: var(--btn-hover); }
 }

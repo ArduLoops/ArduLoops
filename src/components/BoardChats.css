@@ -1,7 +1,7 @@
 @layer components {
   .bv-chats { display: flex; flex-direction: column; gap: 2px; }
-  .bv-chat { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 8px 10px; border-radius: 6px; background: #0c0e11; color: var(--ink); font-size: 12px; text-align: left; }
-  .bv-chat:hover { background: #141a22; }
+  .bv-chat { display: flex; justify-content: space-between; gap: 12px; margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--sunk); color: var(--ink); font-size: 12px; text-align: left; }
+  .bv-chat:hover { background: var(--card); }
   .bv-chat small { flex: none; color: var(--dim); }
   .bv-chat span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   @media (max-width: 720px) {

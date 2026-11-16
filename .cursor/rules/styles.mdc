@@ -1,0 +1,18 @@
+---
+description: Where CSS lives in ArduLoops, the cascade layers, and the colour and stacking tokens.
+globs: src/**/*.css,src/**/*.tsx
+alwaysApply: false
+---
+
+# Styles
+
+- A component's rules live next to it: `src/components/Foo.css`, imported by `Foo.tsx` with `import "./Foo.css"`. There is no central list of CSS files.
+- `src/styles.css` holds only global rules: tokens, reset, base text, the app shell (header, `main`, `aside`), shared tabs and dialogs, `html`/`body` state classes and detached windows. Rules used by several components go to a shared file: `src/styles/*.css`, `src/components/setup-steps.css` or `src/components/library.css`.
+- Every file puts its rules into one cascade layer. The order is declared once at the top of `src/styles.css`: `vendor, reset, buttons, base, shared, components, overrides`. A component file wraps everything in `@layer components { … }`. Third-party CSS is imported into `vendor` with `@import url(…) layer(vendor)`. Unlayered CSS beats every layer, so do not add any.
+- Inside one layer, import order decides nothing. Two files in the same layer must not tie on specificity for the same element and property. Move the rule into the file that owns the element, or make the selector more specific.
+- A component that changes a state of the base `button` rule (`:hover`, `:disabled:hover`, `.on`) writes it as `button:where(.foo):hover`. This keeps the specificity of the base rule.
+- Colours come from the tokens in `:root` in `src/styles.css`: surfaces `--bg`, `--sunk`, `--card-dim`, `--card`, `--panel`, `--btn`, `--btn-hover`; lines `--line-soft`, `--line`, `--line-strong`, `--line-bright`; text `--ink`, `--ink-2`, `--dim`, `--faint`; accents `--cyan`, `--cyan-bg`, `--cyan-fill`, `--amber`, `--ok`, `--hot`, `--hot-ink`, `--violet`, `--pid`, `--wool`. A colour used once for one tint may stay literal. A colour used in three or more places becomes a token.
+- App-wide fixed layers use the stacking tokens: `--z-fab`, `--z-assistant`, `--z-window`, `--z-sheet`, `--z-link`, `--z-modal`, `--z-viewer`. A popover inside a component keeps a small local number.
+- `!important` is only for rules that must beat inline sizes and positions set from code, such as the full-screen and detached `FloatWindow`.
+- Media queries cannot read custom properties. The common widths are 768px (phone), 900px (tablet) and 1279px (small laptop). Use one of them unless the layout needs its own width.
+- A style change is checked in the web app at desktop, 768px and 375px widths. See `dev-server.mdc`.

@@ -11,11 +11,11 @@
   .land a:hover { color: var(--ink); }
   .land ul, .land ol { margin: 0 0 12px; padding-left: 18px; }
   .land li { margin: 0 0 6px; }
-  .land img { display: block; width: 100%; border-radius: 10px; margin: 8px 0 14px; background: #0c0e11; }
+  .land img { display: block; width: 100%; border-radius: 10px; margin: 8px 0 14px; background: var(--sunk); }
   .land table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 0 0 12px; }
   .land th { text-align: left; color: var(--dim); font-weight: 650; padding: 4px 8px 4px 0; }
-  .land td { padding: 5px 8px 5px 0; border-top: 1px solid #2a333c; vertical-align: top; }
+  .land td { padding: 5px 8px 5px 0; border-top: 1px solid var(--line); vertical-align: top; }
   .land code { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 12px; color: var(--amber); }
-  .land pre { background: #0c0e11; border-radius: 10px; padding: 12px 14px; overflow: auto;
+  .land pre { background: var(--sunk); border-radius: 10px; padding: 12px 14px; overflow: auto;
     font: 12px/1.45 "Cascadia Mono", Consolas, ui-monospace, monospace; color: var(--ink); margin: 0 0 12px; }
 }

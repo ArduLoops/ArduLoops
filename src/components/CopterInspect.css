@@ -1,5 +1,5 @@
 @layer components {
-  .inspect { flex: none; background: #0c0e11; border-radius: 10px; padding: 10px 12px; min-width: 0; min-height: 0; }
+  .inspect { flex: none; background: var(--sunk); border-radius: 10px; padding: 10px 12px; min-width: 0; min-height: 0; }
   .inspect h2 { font-size: 13px; margin: 0 0 6px; font-weight: 650; }
   .inspect .kind { font-size: 11px; color: var(--dim); margin-bottom: 8px;
     font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }
