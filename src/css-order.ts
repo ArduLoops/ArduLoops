@@ -29,7 +29,6 @@ import "./components/CompassPanel.css";
 import "./components/MotorDiagram.css";
 import "./components/MotorSetup.css";
 import "./components/SetupWizards.css";
-import "./styles/unused.css";
 import "./components/VehicleLogs.css";
 import "./components/LogFindings.css";
 import "./components/BoardView.css";
