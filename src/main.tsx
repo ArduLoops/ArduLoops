@@ -1,5 +1,6 @@
-// CSS first, in its cascade order (see css-order.ts).
-import "./css-order";
+// Global CSS first: styles.css declares the cascade layers every other CSS file uses.
+import "./styles.css";
+import "./styles/buttons.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";

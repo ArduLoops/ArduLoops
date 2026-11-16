@@ -1,6 +1,8 @@
-.pane.pane-scope { overflow: visible; }
-.pane.pane-loop { grid-area: loop; }
-.pane.pane-scope { grid-area: scope; }
-.studio-win-body { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0 6px 6px; }
-.pane-body { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
-.pane.pane-scope .pane-body { overflow: hidden; }
+@layer components {
+  .pane.pane-scope { overflow: visible; }
+  .pane.pane-loop { grid-area: loop; }
+  .pane.pane-scope { grid-area: scope; }
+  .studio-win-body { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0 6px 6px; }
+  .pane-body { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .pane.pane-scope .pane-body { overflow: hidden; }
+}

@@ -1,27 +1,31 @@
-.aside-grip {
-  position: relative;
-  margin: 0; padding: 0; min-width: 0; width: auto; height: auto; align-self: stretch;
-  background: transparent; color: transparent; border: 0; border-radius: 0;
-  box-shadow: none; filter: none; cursor: col-resize; touch-action: none;
-}
-.aside-grip::before {
-  content: "";
-  position: absolute; top: 50%; left: 50%;
-  width: 3px; height: 28px; margin: -14px 0 0 -1.5px;
-  border-radius: 2px; background: transparent; pointer-events: none;
-}
-.aside-grip:hover, body.split-drag .aside-grip {
-  background: transparent; box-shadow: none; filter: none;
-}
-.aside-grip:hover::before, body.split-drag .aside-grip::before {
-  background: #5c6b7a;
-}
-body.split-drag { cursor: col-resize; user-select: none; }
-body.split-drag iframe, body.split-drag canvas { pointer-events: none; }
+@layer components {
+  .aside-grip {
+    position: relative;
+    margin: 0; padding: 0; min-width: 0; width: auto; height: auto; align-self: stretch;
+    background: transparent; color: transparent; border: 0; border-radius: 0;
+    box-shadow: none; filter: none; cursor: col-resize; touch-action: none;
+  }
+  .aside-grip::before {
+    content: "";
+    position: absolute; top: 50%; left: 50%;
+    width: 3px; height: 28px; margin: -14px 0 0 -1.5px;
+    border-radius: 2px; background: transparent; pointer-events: none;
+  }
+  .aside-grip:hover, body.split-drag .aside-grip {
+    background: transparent; box-shadow: none; filter: none;
+  }
+  .aside-grip:hover::before, body.split-drag .aside-grip::before {
+    background: #5c6b7a;
+  }
+  body.split-drag { cursor: col-resize; user-select: none; }
+  body.split-drag iframe, body.split-drag canvas { pointer-events: none; }
+  button.aside-grip,
+  button.aside-grip:hover { background: transparent; box-shadow: none; filter: none; }
 
-@media (max-width: 900px) {
-  .aside-grip { display: none; }
-}
-@media (max-width: 720px) {
-  .aside-grip { display: none; }
+  @media (max-width: 900px) {
+    .aside-grip { display: none; }
+  }
+  @media (max-width: 720px) {
+    .aside-grip { display: none; }
+  }
 }

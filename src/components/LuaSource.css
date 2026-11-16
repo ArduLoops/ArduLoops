@@ -1,3 +1,5 @@
-.lua-preview { margin: 4px 0 0; overflow: hidden; border-radius: 8px; background: #0c0e11; }
-.lua-preview .cm-editor { background: #0c0e11; }
-.lua-preview .cm-scroller { max-height: 480px; overflow: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+@layer components {
+  .lua-preview { margin: 4px 0 0; overflow: hidden; border-radius: 8px; background: #0c0e11; }
+  .lua-preview .cm-editor { background: #0c0e11; }
+  .lua-preview .cm-scroller { max-height: 480px; overflow: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+}

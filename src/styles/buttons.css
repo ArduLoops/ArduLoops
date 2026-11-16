@@ -1,14 +1,15 @@
-/* Base button look. It sits in the middle of css-order.ts on purpose: files before it lose ties to
-   button:hover and the colour classes, files after it win, as in the old single styles.css. */
+/* Base button look, in the buttons layer under base, shared and components: any class rule beats it.
+   Where a component used to lose to these states (hover, disabled hover, .on, colour classes), its file has a
+   small button:where(...) rule that keeps the old look. */
 
-button { background: #2a3140; color: var(--ink); border: 0; border-radius: 8px;
-  padding: 7px 10px; margin: 0 6px 8px 0; cursor: pointer; }
-button:hover { background: #364054; }
-button.aside-grip,
-button.aside-grip:hover { background: transparent; box-shadow: none; filter: none; }
-button:disabled { opacity: 0.55; cursor: default; }
-button:disabled:hover { background: #2a3140; }
-button.on { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35); filter: brightness(1.12); }
-button.cyan { background: #15516a; }
-button.amber { background: #6a4a12; }
-button.hot { background: #6b2424; }
+@layer buttons {
+  button { background: #2a3140; color: var(--ink); border: 0; border-radius: 8px;
+    padding: 7px 10px; margin: 0 6px 8px 0; cursor: pointer; }
+  button:hover { background: #364054; }
+  button:disabled { opacity: 0.55; cursor: default; }
+  button:disabled:hover { background: #2a3140; }
+  button.on { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35); filter: brightness(1.12); }
+  button.cyan { background: #15516a; }
+  button.amber { background: #6a4a12; }
+  button.hot { background: #6b2424; }
+}

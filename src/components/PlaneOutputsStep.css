@@ -1,26 +1,28 @@
-.ms-fold { border-radius: 8px; background: #161b22; border: 1px solid #222a36; font-size: 12px; color: #a9b6c4; }
-.ms-fold summary { display: flex; justify-content: space-between; align-items: center; height: 32px; padding: 0 12px; cursor: pointer; list-style: none; }
-.ms-fold summary::-webkit-details-marker { display: none; }
-.ms-fold summary span { color: var(--dim); font-size: 11px; }
-.ms-fold p { margin: 0; padding: 0 12px 10px; color: var(--dim); line-height: 1.45; }
-.po-thr-out { display: inline-flex; align-items: center; gap: 4px; }
-.po-srvs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-@container (max-width: 640px) {
-  .po-srvs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-.po-srv { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: #141a22; border: 1px solid #222a36; }
-.po-srv.missing { border-color: #5a4524; }
-.po-srv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
-.po-srv-name { display: flex; flex-direction: column; }
-.po-srv-name b { font-size: 13px; }
-.po-srv-name span, .po-mtm { color: var(--dim); font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 10px; }
-.po-live { color: var(--cyan); font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 11px; }
-.po-mtm { display: flex; justify-content: space-between; }
-.po-dim { color: var(--dim); font-size: 11px; line-height: 1.4; }
-.po-also { color: var(--cyan); font-size: 11px; }
-.po-srv-foot { display: flex; align-items: center; justify-content: space-between; }
-.po-rev { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
-.po-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-@container (max-width: 560px) {
-  .po-grid2 { grid-template-columns: 1fr; }
+@layer components {
+  .ms-fold { border-radius: 8px; background: #161b22; border: 1px solid #222a36; font-size: 12px; color: #a9b6c4; }
+  .ms-fold summary { display: flex; justify-content: space-between; align-items: center; height: 32px; padding: 0 12px; cursor: pointer; list-style: none; }
+  .ms-fold summary::-webkit-details-marker { display: none; }
+  .ms-fold summary span { color: var(--dim); font-size: 11px; }
+  .ms-fold p { margin: 0; padding: 0 12px 10px; color: var(--dim); line-height: 1.45; }
+  .po-thr-out { display: inline-flex; align-items: center; gap: 4px; }
+  .po-srvs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  @container (max-width: 640px) {
+    .po-srvs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  .po-srv { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: #141a22; border: 1px solid #222a36; }
+  .po-srv.missing { border-color: #5a4524; }
+  .po-srv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .po-srv-name { display: flex; flex-direction: column; }
+  .po-srv-name b { font-size: 13px; }
+  .po-srv-name span, .po-mtm { color: var(--dim); font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 10px; }
+  .po-live { color: var(--cyan); font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 11px; }
+  .po-mtm { display: flex; justify-content: space-between; }
+  .po-dim { color: var(--dim); font-size: 11px; line-height: 1.4; }
+  .po-also { color: var(--cyan); font-size: 11px; }
+  .po-srv-foot { display: flex; align-items: center; justify-content: space-between; }
+  .po-rev { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+  .po-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @container (max-width: 560px) {
+    .po-grid2 { grid-template-columns: 1fr; }
+  }
 }

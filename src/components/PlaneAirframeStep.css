@@ -1,55 +1,61 @@
-.lc.other { box-shadow: inset 0 0 0 1px #5a4524; color: var(--amber); }
-/* Plane airframe step */
-.pas-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-@container (max-width: 560px) {
-  .pas-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@layer components {
+  .lc.other { box-shadow: inset 0 0 0 1px #5a4524; color: var(--amber); }
+  /* Plane airframe step */
+  .pas-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  @container (max-width: 560px) {
+    .pas-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  .pas-card { display: flex; flex-direction: column; align-items: center; gap: 3px; margin: 0; padding: 10px 8px; border-radius: 10px; background: #141a22; border: 1.5px solid #222a36; color: var(--ink); text-align: center; box-shadow: none; filter: none; }
+  .pas-card:hover { border-color: #2f3a48; background: #141a22; }
+  .pas-card.on { border-color: var(--cyan); background: #0f2230; }
+  .pas-card:disabled { opacity: 0.5; cursor: default; }
+  .pas-card b { font-size: 13px; font-weight: 650; }
+  .pas-card span { color: var(--dim); font-size: 11px; }
+  .pas-mark { width: 104px; height: 84px; }
+  .pas-body { fill: #2a3140; }
+  .pas-sv { fill: rgba(79, 195, 247, 0.35); stroke: var(--cyan); stroke-width: 1.2; }
+  .pas-sv.alt { fill: rgba(255, 183, 77, 0.35); stroke: var(--amber); }
+  /* The saved airframe on the Airframe step and in its wizard: nose up, each surface tagged with its output. */
+  .pas-art { width: 220px; height: 205px; }
+  .sw-art .pas-art { width: 100%; max-width: 260px; height: auto; }
+  .pas-nose { fill: var(--cyan); }
+  .pas-tag circle { fill: #141a22; stroke: #3a4552; stroke-width: 1; }
+  .pas-tag text { fill: var(--ink); font-size: 7.5px; font-weight: 700; text-anchor: middle; }
+  .pas-tag.changed circle { stroke: var(--cyan); }
+  .pas-tag.changed text { fill: var(--cyan); }
+  .pas-tag.missing circle { stroke: var(--amber); }
+  .pas-tag.missing text { fill: var(--amber); }
+  .mw-body .pas-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pas-plus { stroke: var(--dim); stroke-width: 3; stroke-linecap: round; }
+  .pas-boom { stroke: #3a4552; stroke-width: 4; }
+  .pas-rotor { fill: #0f2230; stroke: var(--cyan); stroke-width: 1.5; }
+  .pas-qp { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: #141a22; border: 1px solid #222a36; }
+  .pas-qp.off { opacity: 0.6; }
+  .pas-qp-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+  .pas-qp-head { display: flex; align-items: center; gap: 8px; }
+  .pas-qp-head b { font-size: 13px; }
+  .pas-qp-line { color: var(--dim); font-size: 12px; line-height: 1.4; }
+  .pas-qp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .frs-pill.static { opacity: 0.45; cursor: help; }
+  .frs-pill.static.on { opacity: 1; }
+  .pas-switch { position: relative; width: 30px; height: 17px; margin: 0; padding: 0; border-radius: 9px; background: #2a333c; border: 0; box-shadow: none; filter: none; }
+  .pas-switch i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #a9b6c4; transition: left 0.12s; }
+  .pas-switch.on { background: #15516a; }
+  .pas-switch.on i { left: 15px; background: var(--cyan); }
+  .pas-switch:disabled { opacity: 0.4; }
+  .pas-omap { display: flex; flex-direction: column; gap: 3px; }
+  .pas-orow { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 7px; background: #141a22; border: 1px solid #1d232c; font-size: 12px; }
+  .pas-orow b { flex: 1; font-size: 13px; font-weight: 600; }
+  .pas-orow.changed { border-color: #1f5a73; background: #0f2230; }
+  .pas-orow.missing { border-color: #5a2a2c; }
+  .pas-out { width: 92px; color: #a9b6c4; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 11px; }
+  .pas-fn { color: var(--dim); font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 11px; }
+  .pas-orow.changed .pas-fn { color: var(--cyan); }
+  .pas-ok { width: 14px; text-align: center; color: var(--ok); font-weight: 700; }
+  .pas-orow.changed .pas-ok { color: var(--cyan); }
+  .pas-orow.missing .pas-ok { color: var(--hot); }
+  /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
+  button:where(.pas-card, .pas-switch):disabled:hover { background: #2a3140; }
+  button:where(.pas-card, .pas-switch).on { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35); filter: brightness(1.12); }
+  button:where(.pas-switch):hover { background: #364054; }
 }
-.pas-card { display: flex; flex-direction: column; align-items: center; gap: 3px; margin: 0; padding: 10px 8px; border-radius: 10px; background: #141a22; border: 1.5px solid #222a36; color: var(--ink); text-align: center; box-shadow: none; filter: none; }
-.pas-card:hover { border-color: #2f3a48; background: #141a22; }
-.pas-card.on { border-color: var(--cyan); background: #0f2230; }
-.pas-card:disabled { opacity: 0.5; cursor: default; }
-.pas-card b { font-size: 13px; font-weight: 650; }
-.pas-card span { color: var(--dim); font-size: 11px; }
-.pas-mark { width: 104px; height: 84px; }
-.pas-body { fill: #2a3140; }
-.pas-sv { fill: rgba(79, 195, 247, 0.35); stroke: var(--cyan); stroke-width: 1.2; }
-.pas-sv.alt { fill: rgba(255, 183, 77, 0.35); stroke: var(--amber); }
-/* The saved airframe on the Airframe step and in its wizard: nose up, each surface tagged with its output. */
-.pas-art { width: 220px; height: 205px; }
-.sw-art .pas-art { width: 100%; max-width: 260px; height: auto; }
-.pas-nose { fill: var(--cyan); }
-.pas-tag circle { fill: #141a22; stroke: #3a4552; stroke-width: 1; }
-.pas-tag text { fill: var(--ink); font-size: 7.5px; font-weight: 700; text-anchor: middle; }
-.pas-tag.changed circle { stroke: var(--cyan); }
-.pas-tag.changed text { fill: var(--cyan); }
-.pas-tag.missing circle { stroke: var(--amber); }
-.pas-tag.missing text { fill: var(--amber); }
-.mw-body .pas-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.pas-plus { stroke: var(--dim); stroke-width: 3; stroke-linecap: round; }
-.pas-boom { stroke: #3a4552; stroke-width: 4; }
-.pas-rotor { fill: #0f2230; stroke: var(--cyan); stroke-width: 1.5; }
-.pas-qp { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: #141a22; border: 1px solid #222a36; }
-.pas-qp.off { opacity: 0.6; }
-.pas-qp-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.pas-qp-head { display: flex; align-items: center; gap: 8px; }
-.pas-qp-head b { font-size: 13px; }
-.pas-qp-line { color: var(--dim); font-size: 12px; line-height: 1.4; }
-.pas-qp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.frs-pill.static { opacity: 0.45; cursor: help; }
-.frs-pill.static.on { opacity: 1; }
-.pas-switch { position: relative; width: 30px; height: 17px; margin: 0; padding: 0; border-radius: 9px; background: #2a333c; border: 0; box-shadow: none; filter: none; }
-.pas-switch i { position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #a9b6c4; transition: left 0.12s; }
-.pas-switch.on { background: #15516a; }
-.pas-switch.on i { left: 15px; background: var(--cyan); }
-.pas-switch:disabled { opacity: 0.4; }
-.pas-omap { display: flex; flex-direction: column; gap: 3px; }
-.pas-orow { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 7px; background: #141a22; border: 1px solid #1d232c; font-size: 12px; }
-.pas-orow b { flex: 1; font-size: 13px; font-weight: 600; }
-.pas-orow.changed { border-color: #1f5a73; background: #0f2230; }
-.pas-orow.missing { border-color: #5a2a2c; }
-.pas-out { width: 92px; color: #a9b6c4; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 11px; }
-.pas-fn { color: var(--dim); font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 11px; }
-.pas-orow.changed .pas-fn { color: var(--cyan); }
-.pas-ok { width: 14px; text-align: center; color: var(--ok); font-weight: 700; }
-.pas-orow.changed .pas-ok { color: var(--cyan); }
-.pas-orow.missing .pas-ok { color: var(--hot); }
