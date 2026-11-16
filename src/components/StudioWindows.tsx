@@ -1,3 +1,4 @@
+import "./StudioWindows.css";
 import { useT } from "../i18n/i18n";
 import { copterAxis, copterPick, planeAxis, planePick, returnStudioPane, setStudioFocus, usePoppedPanes, useStudioFocus, type StudioPane } from "../lib/studioFocus";
 import { CopterLoopView } from "../copter/LoopView";

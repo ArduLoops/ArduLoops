@@ -1,3 +1,4 @@
+import "./StepPreArm.css";
 import { useT } from "../i18n/i18n";
 import { prearmStep } from "../lib/setupSteps";
 import { PREARM_FRESH_S } from "../lib/vehicleHeader";

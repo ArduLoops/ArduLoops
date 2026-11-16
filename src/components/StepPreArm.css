@@ -1,0 +1,4 @@
+@layer components {
+  /* Accelerometer and Compass steps */
+  .sst-prearm { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-weight: 500; }
+}

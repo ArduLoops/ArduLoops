@@ -1,3 +1,4 @@
+import "./MotorDiagram.css";
 import type { KeyboardEvent } from "react";
 import type { MotorFrame } from "../lib/motorFrames";
 

@@ -1,3 +1,4 @@
+import "./BoardView.css";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useT } from "../i18n/i18n";
 import { fetchBoardParams, fetchBoards, type BoardRow, type SavedParams } from "../lib/boards";

@@ -1,0 +1,32 @@
+@layer components {
+  .board-view { position: relative; display: flex; flex-direction: column; min-height: 0; }
+  .bv-cloud { margin: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; text-align: left; text-decoration: underline dotted #4a5868; text-underline-offset: 3px; cursor: pointer; }
+  .bv-cloud:hover { color: var(--cyan); }
+  .bv-cloud.pending, .bv-cloud.off, .bv-cloud.signed_out, .bv-cloud.removed { color: var(--dim); }
+  .bv-facts { display: grid; grid-template-columns: repeat(2, minmax(0, auto)); gap: 4px 18px; margin: 0 0 0 auto; font-size: 12px; }
+  .bv-facts div { display: flex; flex-direction: column; }
+  .bv-facts dt { color: var(--dim); font-size: 10px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
+  .bv-facts dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .bv-close { flex: none; margin-left: 12px; }
+  .bv-empty { margin: 0; padding: 16px 10px; color: var(--dim); font-size: 12px; }
+  .bv-params { display: flex; flex-direction: column; min-height: 0; }
+  .bv-bar { display: flex; align-items: center; gap: 12px; padding: 0 0 8px; }
+  .bv-search { flex: 0 1 240px; }
+  .bv-dim { color: var(--dim); font-size: 12px; }
+  .bv-table { min-height: 0; flex: 1; overflow: auto; border-radius: 8px; background: var(--sunk); }
+  .bv-row { display: grid; grid-template-columns: minmax(0, 1fr) 10em; gap: 10px; padding: 4px 10px; border-bottom: 1px solid #161c22; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .bv-row .r { text-align: right; }
+  @container (max-width: 560px) {
+    .board-view .bv-close { grid-column: 2; grid-row: 1; margin-left: 0; }
+    .board-view .bv-facts { grid-column: 1 / -1; grid-row: 2; margin: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .board-view .bv-facts > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+    .board-view .vb-board { flex-basis: 100%; }
+  }
+  /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
+  button:where(.bv-cloud):hover { background: var(--btn-hover); }
+  @media (max-width: 720px) {
+    .bv-bar { flex-wrap: wrap; gap: 4px 12px; }
+    .bv-search { flex: 1 1 100%; }
+    .bv-row { grid-template-columns: minmax(0, 1fr) auto; padding: 7px 10px; }
+  }
+}

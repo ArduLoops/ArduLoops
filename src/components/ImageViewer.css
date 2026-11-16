@@ -1,0 +1,21 @@
+@layer components {
+  /* Full-screen image view: above the windows and the assistant. */
+  .iv { position: fixed; inset: 0; z-index: var(--z-viewer); display: flex; flex-direction: column; background: rgba(8, 10, 12, 0.94); padding-top: var(--status-top, 0px); }
+  .iv-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); color: var(--ink); }
+  .iv-bar .mw-icon { flex: none; color: var(--ink); font-size: 16px; }
+  .iv-title { min-width: 0; font-size: 13px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .iv-count, .iv-pct { flex: none; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .iv-pct { width: 44px; text-align: center; }
+  .iv-gap { flex: 1; }
+  .iv-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: grab; touch-action: none; }
+  .iv-stage:active { cursor: grabbing; }
+  .iv-stage img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; background: #fff; }
+  .iv-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 64px; margin: 0; padding: 0; border-radius: 10px; background: rgba(26, 30, 36, 0.8); color: var(--ink); font-size: 28px; line-height: 1; }
+  .iv-nav.prev { left: 12px; }
+  .iv-nav.next { right: 12px; }
+  @media (max-width: 760px) {
+    .iv-bar .frs-btn, .iv-bar .bd-ext { display: none; }
+  }
+  /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
+  button:where(.iv-nav):hover { background: var(--btn-hover); }
+}

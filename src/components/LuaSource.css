@@ -1,0 +1,5 @@
+@layer components {
+  .lua-preview { margin: 4px 0 0; overflow: hidden; border-radius: 8px; background: var(--sunk); }
+  .lua-preview .cm-editor { background: var(--sunk); }
+  .lua-preview .cm-scroller { max-height: 480px; overflow: auto; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+}

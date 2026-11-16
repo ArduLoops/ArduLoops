@@ -1,0 +1,15 @@
+@layer components {
+  .ms-art.fs-art-col { width: 280px; align-items: stretch; gap: 8px; }
+  .ms-art.fs-art-col > span { text-align: center; }
+  .fs-g { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line-soft); }
+  .fs-g.hot { border-color: #5a2a2c; background: #1e1416; }
+  .fs-g.dim { opacity: 0.55; }
+  .fs-g-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+  .fs-g-head span { color: var(--dim); text-align: right; }
+  .fs-g.hot .fs-g-head span { color: var(--hot-ink); }
+  .fs-g-bar { position: relative; display: block; height: 8px; border-radius: 4px; background: var(--line-soft); }
+  .fs-g-bar i { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--hot); }
+  .fs-g-bar em { position: absolute; top: -3px; width: 3px; height: 14px; margin-left: -1px; border-radius: 2px; background: var(--ink); }
+  .fs-big { display: flex; align-items: center; justify-content: center; width: 180px; height: 180px; border-radius: 50%; border: 3px solid var(--ok); color: var(--ok); font-size: 20px; font-weight: 700; }
+  .fs-big.hot { border-color: var(--hot); color: var(--hot); }
+}

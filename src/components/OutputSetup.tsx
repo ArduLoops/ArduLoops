@@ -1,3 +1,4 @@
+import "./OutputSetup.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";

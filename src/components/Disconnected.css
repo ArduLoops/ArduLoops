@@ -1,0 +1,23 @@
+@layer components {
+  .land-main { grid-column: 2; grid-row: 3; min-height: 0; min-width: 0; overflow: auto; padding: 0 16px 24px; }
+  /* Phone with the SITL panel open: the shell has one column (styles.css). */
+  @media (max-width: 720px) { .app.sitl-open .land-main { grid-column: 1; } }
+  .land { max-width: 760px; margin: 0 auto; padding: 8px 4px 32px; }
+  .land-kicker { margin: 0 0 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--amber); }
+  .land h1 { margin: 0 0 12px; font-size: clamp(22px, 3vw, 32px); font-weight: 700; letter-spacing: 0.01em; line-height: 1.2; }
+  .land h2 { margin: 22px 0 8px; font-size: 15px; font-weight: 650; color: var(--cyan); }
+  .land h3 { margin: 16px 0 6px; font-size: 13px; font-weight: 650; color: var(--ink); }
+  .land p { margin: 0 0 10px; color: var(--ink); }
+  .land .quiet { color: var(--dim); font-size: 13px; }
+  .land a { color: var(--cyan); }
+  .land a:hover { color: var(--ink); }
+  .land ul, .land ol { margin: 0 0 12px; padding-left: 18px; }
+  .land li { margin: 0 0 6px; }
+  .land img { display: block; width: 100%; border-radius: 10px; margin: 8px 0 14px; background: var(--sunk); }
+  .land table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 0 0 12px; }
+  .land th { text-align: left; color: var(--dim); font-weight: 650; padding: 4px 8px 4px 0; }
+  .land td { padding: 5px 8px 5px 0; border-top: 1px solid var(--line); vertical-align: top; }
+  .land code { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 12px; color: var(--amber); }
+  .land pre { background: var(--sunk); border-radius: 10px; padding: 12px 14px; overflow: auto;
+    font: 12px/1.45 "Cascadia Mono", Consolas, ui-monospace, monospace; color: var(--ink); margin: 0 0 12px; }
+}

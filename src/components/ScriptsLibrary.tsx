@@ -1,3 +1,4 @@
+import "./ScriptsLibrary.css";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { StreamLanguage } from "@codemirror/language";

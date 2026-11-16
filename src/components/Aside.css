@@ -1,0 +1,136 @@
+@layer components {
+  /* Groups for the tablet portrait strip. Elsewhere they do not take part in layout. */
+  .aside-hud, .aside-rest { display: contents; }
+  aside.idle .flight,
+  aside.idle .sticks,
+  aside.idle .btns,
+  aside.idle .sliders { pointer-events: none; opacity: 0.45; }
+  aside.idle .stick { cursor: default; }
+  .feel { font-size: clamp(20px, 2.4vw, 28px); font-weight: 700; letter-spacing: 0.02em;
+    margin: 0 0 6px; flex: none; }
+  .feel.wool { color: var(--wool); }
+  .feel.ok { color: var(--ok); }
+  .feel.hot { color: var(--hot); }
+  .feel.gnd { color: var(--amber); }
+  .feel.idle { color: var(--wool); }
+  .controls { flex: none; display: flex; flex-direction: column; min-width: 0; }
+  .controls[hidden] { display: none; }
+  .controls-toggle {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    width: 100%; margin: 8px 0 0; padding: 8px 10px;
+    background: var(--sunk); color: var(--dim); border-radius: 8px;
+    font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; text-align: left;
+  }
+  .controls-toggle::before {
+    content: ""; width: 6px; height: 6px; flex: none;
+    border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg) translate(-1px, -1px);
+  }
+  .controls-toggle.on::before { transform: rotate(45deg) translate(-1px, -1px); }
+  .controls-toggle:hover,
+  .controls-toggle.on,
+  .controls-toggle.on:hover { background: #14181d; color: var(--ink); box-shadow: none; filter: none; }
+  .controls-toggle span {
+    margin-left: auto; color: var(--dim); font-weight: 500; letter-spacing: 0; text-transform: none; flex: none;
+  }
+  .fold-body { flex: none; min-width: 0; }
+  .fold-body.fold-scroll { flex: 0 1 auto; min-height: 0; overflow: auto; }
+  .fold-body[hidden] { display: none; }
+  .sticks { flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0 8px; }
+  .flight { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) 92px;
+    gap: 8px; align-items: stretch; margin: 6px 0 0; }
+  .flight select {
+    width: 100%; min-width: 0; appearance: none; -webkit-appearance: none;
+    background: var(--sunk) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path fill='%238b98a8' d='M1 1l5 5 5-5'/></svg>") no-repeat right 10px center;
+    color: var(--ink); border: 0; border-radius: 8px; padding: 7px 28px 7px 10px;
+    font: inherit; font-size: 12px; font-weight: 650; letter-spacing: 0.02em; cursor: pointer;
+  }
+  .flight select:focus { outline: 1px solid #3a4652; }
+  .arm-sw { margin: 0; min-width: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; }
+  .arm-sw.on { background: #6b2424; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.2); }
+  .stick { position: relative; height: 96px; background: var(--sunk); border-radius: 10px;
+    touch-action: none; user-select: none; cursor: grab; overflow: hidden; }
+  .stick:active { cursor: grabbing; }
+  .stick .cross { position: absolute; inset: 18px; border: 1px dashed var(--line); border-radius: 8px;
+    pointer-events: none; }
+  .stick .cross::before, .stick .cross::after { content: ""; position: absolute; background: var(--line); }
+  .stick .cross::before { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-50%); }
+  .stick .cross::after { top: 50%; left: 0; right: 0; height: 1px; transform: translateY(-50%); }
+  .stick .knob { position: absolute; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--cyan); left: 50%; top: 50%; transform: translate(-50%, -50%);
+    pointer-events: none; box-shadow: 0 0 0 3px rgba(79,195,247,0.18); }
+  .stick.thr .knob { background: var(--amber); box-shadow: 0 0 0 3px rgba(255,183,77,0.18); }
+  .stick .tag { position: absolute; font-size: 9px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: #6b7884; pointer-events: none; }
+  .stick .tag.n { top: 4px; left: 0; right: 0; text-align: center; }
+  .stick .tag.s { bottom: 4px; left: 0; right: 0; text-align: center; }
+  .stick .tag.w { left: 5px; top: 50%; transform: translateY(-50%); }
+  .stick .tag.e { right: 5px; top: 50%; transform: translateY(-50%); }
+  .sticks.axis-roll .stick:not(.thr) .cross::after { background: var(--cyan); }
+  .sticks.axis-roll .stick:not(.thr) .tag.w,
+  .sticks.axis-roll .stick:not(.thr) .tag.e { color: var(--cyan); }
+  .sticks.axis-pitch .stick:not(.thr) .cross::before { background: var(--cyan); }
+  .sticks.axis-pitch .stick:not(.thr) .tag.n,
+  .sticks.axis-pitch .stick:not(.thr) .tag.s { color: var(--cyan); }
+  .sticks.axis-yaw .stick.thr .cross::after { background: var(--cyan); }
+  .sticks.axis-yaw .stick.thr .tag.w,
+  .sticks.axis-yaw .stick.thr .tag.e { color: var(--cyan); }
+  .sticks.axis-d .stick.thr .cross::before { background: var(--cyan); }
+  .sticks.axis-d .stick.thr .tag.n,
+  .sticks.axis-d .stick.thr .tag.s { color: var(--cyan); }
+  .hint { color: var(--dim); font-size: 13px; margin-bottom: 10px; flex: none;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    overflow: hidden; }
+  .btns { flex: none; }
+  /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
+  button:where(.arm-sw.on):disabled:hover { background: var(--btn); }
+  .sliders { flex: none; margin: 2px 0 8px; }
+  .tune-empty { flex: none; margin: 4px 0 8px; font-size: 12px; color: var(--dim); }
+  .log-label { color: var(--dim); font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase; margin: 4px 0 6px; flex: none; }
+  .log { flex: 1 1 88px; height: auto; min-height: 88px; overflow-y: auto; background: var(--sunk);
+    border-radius: 8px; padding: 8px 10px; color: var(--dim);
+    font: 11.5px/1.45 "Cascadia Mono", Consolas, ui-monospace, monospace; }
+  /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
+  button:where(.log):hover { background: var(--btn-hover); }
+  button:where(.log):disabled:hover { background: var(--btn); }
+  button:where(.log).cyan { background: var(--cyan-fill); }
+  button:where(.log).amber { background: #6a4a12; }
+  button:where(.log).hot { background: #6b2424; }
+  .log .row { display: flex; gap: 8px; align-items: baseline; min-width: 0; }
+  .log .t { color: #5c6b7a; flex: none; white-space: nowrap; }
+  .log .row > span:not(.t) {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .log .cmd { color: var(--amber); }
+  .log .ok { color: var(--ok); }
+  .log .bad { color: var(--hot); }
+  .log .dim { color: var(--dim); }
+
+  @media (max-width: 900px) {
+    .aside-hud, .aside-rest { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .aside-hud { overflow: hidden; }
+    .aside-rest { overflow: auto; }
+  }
+  @media (max-width: 720px) {
+    .aside-hud, .aside-rest { display: contents; }
+    aside .feel,
+    aside .hint,
+    aside .btns,
+    aside .aside-fold,
+    aside .fold-body,
+    aside .tune-cap,
+    aside .tune-empty,
+    aside .sliders,
+    aside .inspect { display: none; }
+    .stick { height: 132px; }
+    .log { flex: 1 1 120px; height: auto; min-height: 120px; }
+  }
+  @media (max-height: 640px) {
+    .hint { -webkit-line-clamp: 2; }
+    .feel { font-size: 18px; }
+    .stick { height: 80px; }
+  }
+}

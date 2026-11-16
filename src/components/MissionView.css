@@ -1,0 +1,57 @@
+@layer components {
+  .mission-acts { margin-left: auto; display: flex; gap: 6px; flex: none; }
+  .mission-acts button { margin: 0; padding: 2px 8px; font-size: 12px; line-height: 16px; }
+  .mission-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 8px; }
+  .mission-map { position: relative; min-height: 0; background: var(--sunk); border-radius: 8px; overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .mission-map svg { display: block; width: 100%; height: 100%; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+  body.mission-drag, body.mission-drag * { user-select: none; -webkit-user-select: none; }
+  .mission-fit { position: absolute; top: 8px; right: 8px; margin: 0; padding: 2px 8px; font-size: 12px; line-height: 16px; }
+  .mission-read {
+    position: absolute; left: 8px; right: 120px; bottom: 8px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px;
+    font-size: 12px; color: var(--ink); pointer-events: none;
+    font-variant-numeric: tabular-nums; font-feature-settings: "tnum";
+  }
+  .mission-read > span { display: inline-flex; align-items: baseline; gap: 0.35em; white-space: nowrap; flex: none; }
+  .mission-mode { width: 10ch; overflow: hidden; white-space: nowrap; }
+  .mission-num { display: inline-flex; flex: none; }
+  .mission-cell { display: inline-block; width: 1ch; text-align: center; }
+  .mission-kind { display: inline-grid; }
+  .mission-kind > span { grid-area: 1 / 1; white-space: nowrap; }
+  .mission-kind .ghost { visibility: hidden; }
+  .mission-read .off { color: var(--amber); }
+  .mission-empty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; color: var(--dim); pointer-events: none; }
+  .mission-side { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--dim); }
+  .mission-side label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .mission-side input[type="number"] {
+    width: 5.2em; background: var(--sunk); color: var(--ink); border: 0; border-radius: 6px; padding: 3px 6px;
+  }
+  .mission-rtl { justify-content: flex-start; }
+  .mission-presets, .mission-pts-head { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .mission-presets button, .mission-side > button, .mission-pts-head button { margin: 0; padding: 3px 8px; font-size: 12px; }
+  .mission-pts-head { justify-content: space-between; }
+  .mission-pts-head b { color: var(--ink); font-size: 12px; }
+  .mission-pts-head button { background: transparent; color: var(--dim); }
+  .mission-pts-head button:hover { background: transparent; color: var(--ink); }
+  .mission-pts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .mission-pts li { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .mission-pts li.on span { color: var(--cyan); }
+  .mission-pts button { margin: 0; padding: 0 4px; background: transparent; color: var(--dim); font-size: 14px; }
+  .mission-pts button:hover { background: transparent; color: var(--ink); }
+  .mission-legend { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+  .mission-legend li { display: flex; align-items: center; gap: 6px; }
+  .mission-legend .swatch { width: 8px; height: 8px; flex: none; }
+  .mission-legend .swatch.board { background: var(--cyan); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+  .mission-legend .swatch.gps { background: var(--amber); border-radius: 50%; }
+  .mission-legend .swatch.truth { box-shadow: inset 0 0 0 2px var(--ok); border-radius: 50%; }
+  .mission-legend .swatch.home { background: var(--wool); transform: rotate(45deg); width: 7px; height: 7px; }
+  .mission-legend .swatch.l1 { background: transparent; box-shadow: inset 0 0 0 1.5px var(--amber); border-radius: 50%; }
+  .mission-legend .swatch.nu { background: var(--cyan); width: 10px; height: 2px; }
+  .mission-legend .swatch.wp { background: transparent; box-shadow: inset 0 0 0 1.5px var(--wool); border-radius: 50%; }
+  .mission-hint, .mission-msg { margin: 0; line-height: 1.35; }
+  .mission-msg { color: var(--cyan); }
+  .mission-msg.bad { color: var(--hot); }
+  @media (max-width: 980px) {
+    .mission-body { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 1fr) auto; }
+    .mission-side { max-height: 220px; }
+  }
+}

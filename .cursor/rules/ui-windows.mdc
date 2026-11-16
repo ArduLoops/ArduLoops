@@ -1,6 +1,6 @@
 ---
 description: Floating windows in the ArduLoops UI use the shared FloatWindow module.
-globs: src/**/*.tsx,src/styles.css
+globs: src/**/*.tsx,src/**/*.css
 alwaysApply: false
 ---
 
@@ -13,4 +13,4 @@ alwaysApply: false
 - State that a window and the view it came from both show lives in a store that the windows channel syncs, such as `src/lib/studioFocus.ts` for the loops studio. It does not live in one component's `useState`, because a detached window is another page.
 - A pane of the loops studio opens in a window through `src/components/StudioWindows.tsx`.
 - An Ask from a detached window goes through `openAssistant` or `askAssistant`. They pass it to the main window when that window has no assistant.
-- The window's look is `.float-win` in `src/styles.css`. A window adds one size class, such as `live` or `findings`. A modal dialog that must be answered before the app goes on stays a dialog, not a `FloatWindow`.
+- The window's look is `.float-win` in `src/components/FloatWindow.css`. A window adds one size class, such as `live` or `findings`. A modal dialog that must be answered before the app goes on stays a dialog, not a `FloatWindow`.

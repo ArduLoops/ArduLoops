@@ -1,0 +1,5 @@
+@layer components {
+  .ai-chart-sketch { display: block; width: 100%; height: auto; aspect-ratio: 16 / 7; min-height: 48px; max-height: 140px; margin-top: auto; border-radius: 6px; }
+  .ai-chart-plot { flex: 1; min-height: 0; position: relative; }
+  .ai-chart-plot-inner { position: absolute; inset: 0; }
+}

@@ -1,3 +1,4 @@
+import "./LabDialog.css";
 import { useEffect, useState, type ReactNode } from "react";
 import { type Lang, useT, useLang, setLang } from "../i18n/i18n";
 

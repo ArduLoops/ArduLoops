@@ -108,9 +108,46 @@ mod desktop {
             .map_err(|_| "open the link in the browser".to_string())?
     }
 
+    fn show_main(app: &tauri::AppHandle) {
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.unminimize();
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+    }
+
+    /// `arduloops://open?frame=…&ws=…` (src/lib/nav.ts). Other arduloops:// links (auth) are not places.
+    fn app_link(raw: &str) -> Option<tauri::Url> {
+        let url = tauri::Url::parse(raw).ok()?;
+        let verb = url.host_str().unwrap_or_else(|| url.path().trim_matches('/'));
+        (url.scheme() == "arduloops" && verb.trim_matches('/') == "open").then_some(url)
+    }
+
+    /// The link that launched the app, until the main window takes it (`take_app_link`).
+    static LAUNCH_LINK: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+    /// The main window asks once its `app-link` listener is up, so a launch link is not lost before that.
+    #[tauri::command]
+    fn take_app_link() -> Option<String> {
+        LAUNCH_LINK.lock().ok()?.take()
+    }
+
+    /// A link while the app runs: the main window moves there (src/lib/nav.ts listens for `app-link`).
+    fn open_app_link(app: &tauri::AppHandle, raw: &str) {
+        use tauri::Emitter;
+        if app_link(raw).is_some() {
+            let _ = app.emit_to("main", "app-link", raw.to_string());
+            show_main(app);
+        }
+    }
+
     pub fn run() {
         let (tx, rx) = mpsc::channel::<Cmd>();
-        let builder = tauri::Builder::default()
+        let builder = tauri::Builder::default();
+        // First plugin: a second launch focuses this window, and its deep link reaches `on_open_url` here.
+        #[cfg(not(target_os = "android"))]
+        let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)));
+        let builder = builder
             .plugin(tauri_plugin_log::Builder::default().build())
             .plugin(tauri_plugin_opener::init())
             .plugin(tauri_plugin_deep_link::init());
@@ -119,6 +156,7 @@ mod desktop {
         #[cfg(not(target_os = "android"))]
         let builder = builder.plugin(tauri_plugin_window_state::Builder::default().build());
         builder
+            .invoke_handler(tauri::generate_handler![take_app_link])
             .on_window_event(|window, event| {
                 // Detached panels (lib/detach.ts) belong to the main window. Closing them from inside this event
                 // swallows main's own close on Windows, so the places of all windows are saved and the app exits.
@@ -144,14 +182,24 @@ mod desktop {
                 let _ = APP.set(app.handle().clone());
                 {
                     use tauri_plugin_deep_link::DeepLinkExt;
-                    let _ = app.deep_link().on_open_url(|event| {
+                    // An installed build registers the scheme from tauri.conf.json; a dev build points it at itself.
+                    #[cfg(all(debug_assertions, any(windows, target_os = "linux")))]
+                    let _ = app.deep_link().register_all();
+                    let handle = app.handle().clone();
+                    let _ = app.deep_link().on_open_url(move |event| {
                         for item in event.urls() {
                             crate::agent::complete_auth_url(item.as_str());
+                            open_app_link(&handle, item.as_str());
                         }
                     });
                     if let Ok(Some(urls)) = app.deep_link().get_current() {
                         for item in urls {
                             crate::agent::complete_auth_url(item.as_str());
+                            if app_link(item.as_str()).is_some() {
+                                if let Ok(mut slot) = LAUNCH_LINK.lock() {
+                                    *slot = Some(item.to_string());
+                                }
+                            }
                         }
                     }
                 }

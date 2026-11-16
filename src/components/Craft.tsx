@@ -1,3 +1,4 @@
+import "./Craft.css";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import type { Axis } from "../mav/axis";

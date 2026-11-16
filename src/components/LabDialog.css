@@ -1,0 +1,74 @@
+@layer components {
+  .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+  .modal-head h2 { margin: 0; font-size: 14px; font-weight: 650; }
+  .modal-x { margin: 0; padding: 0 8px; font-size: 18px; line-height: 1.2; background: transparent; color: var(--dim); }
+  .modal-x:hover { color: var(--ink); background: var(--btn); }
+  .opt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .opt {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0; border-top: 1px solid var(--line);
+  }
+  .opt:first-child { border-top: 0; padding-top: 2px; }
+  .opt-body { flex: 1; min-width: 0; }
+  .opt-body b { display: block; font-size: 13px; font-weight: 650; }
+  .opt-body span { display: block; margin-top: 2px; font-size: 12px; color: var(--dim); line-height: 1.35; }
+  .opt-body a { color: var(--cyan); }
+  .opt-val { flex: none; color: var(--dim); font-size: 13px; }
+  .opt-val a { color: var(--cyan); font-weight: 650; text-decoration: none; }
+  .opt-val a:hover { text-decoration: underline; }
+  .opt select {
+    flex: none; background: var(--sunk); color: var(--ink); border: 0; border-radius: 6px;
+    padding: 4px 8px; font: 13px/1.3 inherit;
+  }
+  .opt button { flex: none; margin: 0; min-width: 6.5em; }
+  .opt.ai-row { flex-direction: column; align-items: stretch; }
+  .ai-opt { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-start; align-items: center; }
+  .cabinet-link { color: var(--cyan); font-size: 13px; font-weight: 650; text-decoration: none; white-space: nowrap; }
+  .cabinet-link:hover { text-decoration: underline; }
+  .own-key-toggle {
+    display: flex; align-items: center; gap: 8px;
+    width: 100%; min-width: 0; margin: 8px 0 0; padding: 6px 8px;
+    background: transparent; color: var(--dim); border-radius: 8px;
+    font-size: 12px; font-weight: 650; text-align: left; box-shadow: none; filter: none;
+  }
+  .own-key-toggle::before {
+    content: ""; width: 6px; height: 6px; flex: none;
+    border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg) translate(-1px, -1px);
+  }
+  .own-key-toggle.on::before { transform: rotate(45deg) translate(-1px, -1px); }
+  .own-key-toggle:hover,
+  .own-key-toggle.on,
+  .own-key-toggle.on:hover { background: #20262e; color: var(--ink); box-shadow: none; filter: none; }
+  .own-key { margin-top: 8px; }
+  .own-key[hidden] { display: none; }
+  .own-key-line { display: flex; align-items: center; gap: 6px; flex: 1 1 16em; min-width: 0; }
+  .own-key-line input { flex: 1 1 auto; width: auto; min-width: 0; }
+  .own-key-line button { flex: none; margin: 0; }
+  .own-key-on { display: flex; align-items: center; gap: 8px; flex: 1 1 100%; min-width: 0; }
+  .own-key-on span { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 12px; color: var(--dim); line-height: 1.35; }
+  .own-key-on button { flex: none; margin: 0; }
+  .own-key-note { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--dim); line-height: 1.35; }
+  .ai-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .ai-heading { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .ai-heading b { display: inline; }
+  .ai-heading .cabinet-link { margin: 0; }
+  .ai-title .google-signin {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin: 0; min-width: 0; height: 28px; padding: 0 8px 0 6px;
+    background: #fff; color: #1f1f1f; border: 1px solid #747775; border-radius: 4px;
+    font-family: "Segoe UI", Roboto, Arial, sans-serif; font-size: 12px; font-weight: 500;
+    letter-spacing: 0; box-shadow: none; filter: none;
+    text-decoration: none; cursor: pointer;
+  }
+  .ai-title .google-signin svg { flex: none; display: block; width: 14px; height: 14px; }
+  .ai-title .google-signin:hover,
+  .ai-title .google-signin:focus {
+    background: #f8f9fa; color: #1f1f1f;
+    box-shadow: 0 1px 2px rgba(60, 64, 67, 0.3);
+    filter: none;
+  }
+  .ai-opt input { min-width: 12em; background: var(--sunk); color: var(--ink); border: 0; border-radius: 6px; padding: 4px 8px; }
+  .ai-opt input[type="checkbox"] { flex: none; min-width: 0; width: 16px; height: 16px; padding: 0; }
+  .ai-opt input.tlog-path { flex: 1 1 12em; }
+}

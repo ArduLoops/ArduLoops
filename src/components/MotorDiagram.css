@@ -1,0 +1,14 @@
+@layer components {
+  .mw-diagram { display: block; max-width: 100%; height: auto; }
+  /* The shared .sw-art rules (components/setup-steps.css) are in a lower layer now; they used to win here. */
+  .sw-art .mw-diagram { width: 100%; max-width: 300px; }
+  .mw-diagram text { font-family: "Segoe UI", system-ui, sans-serif; }
+  .mw-motor.pick { cursor: pointer; }
+  .mw-motor.pick:hover .mw-motor-ring { stroke-width: 3; filter: brightness(1.35); }
+  .mw-motor:focus { outline: none; }
+  .mw-motor:focus-visible .mw-motor-ring { stroke: #fff; stroke-width: 2.5; }
+
+  @media (max-width: 768px) {
+    .mw-diagram { width: min(300px, 100%); }
+  }
+}

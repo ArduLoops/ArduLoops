@@ -1,0 +1,112 @@
+@layer components {
+  .float-grip { position: absolute; right: 1px; bottom: 1px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; cursor: nwse-resize; touch-action: none; }
+  .float-grip path { fill: none; stroke: var(--faint); stroke-width: 1.3; stroke-linecap: round; }
+  /* The log findings window (LogFindings.tsx), a FloatWindow. */
+  .float-win.findings { width: min(720px, calc(100vw - 16px)); height: min(620px, calc(100dvh - max(var(--status-top, 0px), 16px) - 24px)); left: max(8px, calc(50% - 360px)); top: max(var(--status-top, 0px), 64px); }
+  /* A studio pane in a floating window (StudioWindows.tsx). */
+  .float-win.studio-win { width: min(820px, calc(100vw - 16px)); height: min(560px, calc(100dvh - max(var(--status-top, 0px), 16px) - 24px)); left: max(8px, calc(50% - 410px)); top: max(var(--status-top, 0px), 64px); }
+  .float-win.studio-scheme { width: min(460px, calc(100vw - 16px)); height: min(680px, calc(100dvh - max(var(--status-top, 0px), 16px) - 24px)); }
+  .float-win.studio-scheme { left: 12px; }
+  .float-win.studio-scope { left: auto; right: 12px; top: max(var(--status-top, 0px), 120px); }
+  .studio-win header .axis-sw { margin: 0 6px 0 auto; }
+  .float-win header .axis-sw button { width: auto; height: 24px; padding: 2px 8px; display: inline-block; color: var(--dim); }
+  .float-win header .axis-sw button.on { color: var(--ink); background: var(--sunk); }
+  .float-back { position: fixed; inset: 0; z-index: var(--z-sheet); background: rgba(0, 0, 0, 0.35); }
+  /* A window without a backdrop floats over the app and leaves it usable. */
+  .float-win.modeless { position: fixed; z-index: var(--z-window); }
+  .float-win {
+    position: absolute;
+    left: max(8px, calc(50% - 410px));
+    top: max(var(--status-top, 0px), 16px);
+    width: min(820px, calc(100vw - 16px));
+    height: min(520px, calc(100dvh - max(var(--status-top, 0px), 16px) - 24px - env(safe-area-inset-bottom, 0px)));
+    min-width: min(320px, calc(100vw - 16px));
+    min-height: 200px;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - max(var(--status-top, 0px), 16px) - 16px - env(safe-area-inset-bottom, 0px));
+    display: flex; flex-direction: column;
+    border-radius: 14px; background: #14181d; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45), inset 0 0 0 1px var(--btn);
+    box-sizing: border-box;
+  }
+  .float-win.live {
+    position: fixed;
+    z-index: var(--z-window);
+    width: min(480px, calc(100vw - 16px));
+    height: min(860px, calc(100dvh - max(var(--status-top, 0px), 16px) - 24px - env(safe-area-inset-bottom, 0px)));
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - max(var(--status-top, 0px), 16px) - 16px - env(safe-area-inset-bottom, 0px));
+    left: max(8px, calc(50% - 240px));
+    top: max(var(--status-top, 0px), 16px);
+    box-sizing: border-box;
+  }
+  .float-win.full {
+    position: fixed !important;
+    left: env(safe-area-inset-left, 0px) !important;
+    right: env(safe-area-inset-right, 0px) !important;
+    top: var(--status-top, 0px) !important;
+    bottom: env(safe-area-inset-bottom, 0px) !important;
+    width: auto !important;
+    height: auto !important;
+    max-width: 100vw !important;
+    max-height: calc(100dvh - var(--status-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
+    resize: none !important;
+    border-radius: 0 !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    box-sizing: border-box !important;
+  }
+  .float-win header {
+    display: flex; align-items: center; gap: 4px; padding: 6px 6px 6px 10px;
+    cursor: move; position: relative; z-index: auto;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  .float-win.full header { cursor: default; }
+  .float-win header b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .float-win header button {
+    margin: 0; padding: 0; width: 28px; height: 28px; flex: none;
+    display: grid; place-items: center; background: transparent; color: var(--dim); border-radius: 8px;
+    touch-action: auto;
+  }
+  .float-win header button:hover { background: var(--btn); color: var(--ink); }
+  @media (max-width: 768px) {
+    .float-win {
+      left: 8px;
+      width: min(820px, calc(100vw - 16px));
+      max-width: calc(100vw - 16px);
+      top: max(var(--status-top, 40px), 12px);
+      height: min(540px, calc(100dvh - max(var(--status-top, 40px), 12px) - 16px - env(safe-area-inset-bottom, 0px)));
+      max-height: calc(100dvh - max(var(--status-top, 40px), 12px) - 16px - env(safe-area-inset-bottom, 0px));
+    }
+    .float-win.live {
+      left: 8px;
+      width: min(480px, calc(100vw - 16px));
+      max-width: calc(100vw - 16px);
+      top: max(var(--status-top, 40px), 12px);
+      height: calc(100dvh - max(var(--status-top, 40px), 12px) - 16px - env(safe-area-inset-bottom, 0px));
+      max-height: calc(100dvh - max(var(--status-top, 40px), 12px) - 16px - env(safe-area-inset-bottom, 0px));
+    }
+    .float-win header button {
+      width: 34px;
+      height: 34px;
+    }
+  }
+  .float-win.detached,
+  .ai-float.detached,
+  .bwin.detached {
+    position: static !important;
+    flex: 1;
+    width: auto !important;
+    height: auto !important;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    max-width: none !important;
+    max-height: none !important;
+    resize: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  .float-win.detached header,
+  .ai-float.detached .ai-float-head,
+  .bwin.detached .bwin-head { cursor: default; }
+}

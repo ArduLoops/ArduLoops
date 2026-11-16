@@ -1,3 +1,4 @@
+import "./Disconnected.css";
 import type { Components } from "react-markdown";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";

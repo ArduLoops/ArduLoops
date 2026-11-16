@@ -1,3 +1,4 @@
+import "./FrameStep.css";
 import { useState, useSyncExternalStore } from "react";
 import { editVehicle, useVehicleFacts } from "./ControllerBoard";
 import { MotorDiagram } from "./MotorDiagram";

@@ -1,3 +1,4 @@
+import "./SchemeKnobs.css";
 import type { Gain, NodeDef } from "../lib/gains";
 import { useT } from "../i18n/i18n";
 import type { Axis } from "../mav/axis";

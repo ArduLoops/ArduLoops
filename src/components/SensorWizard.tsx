@@ -1,3 +1,4 @@
+import "./SensorWizard.css";
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n/i18n";

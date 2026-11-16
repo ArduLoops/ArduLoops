@@ -1,0 +1,37 @@
+@layer components {
+  .inspect { flex: none; background: var(--sunk); border-radius: 10px; padding: 10px 12px; min-width: 0; min-height: 0; }
+  .inspect h2 { font-size: 13px; margin: 0 0 6px; font-weight: 650; }
+  .inspect .kind { font-size: 11px; color: var(--dim); margin-bottom: 8px;
+    font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }
+  .inspect .kind.inner { color: var(--cyan); }
+  .inspect .kind.outer { color: var(--amber); }
+  .inspect .kind.ends { color: var(--wool); }
+  .inspect p { margin: 0 0 10px; font-size: 13px; color: var(--ink); }
+  .inspect .io { font-size: 12px; color: var(--dim); margin: 0 0 6px; }
+  .inspect .io b { color: var(--amber); font-weight: 650; }
+  .inspect .io button {
+    display: block; width: 100%; margin: 0; padding: 3px 0; border: 0;
+    background: none; color: inherit; font: inherit; text-align: left; cursor: pointer;
+  }
+  .inspect .io button:hover { color: var(--ink); }
+  .inspect .warn { font-size: 12px; color: var(--amber); margin: 0 0 8px; }
+  .inspect .trap {
+    font-size: 12px;
+    color: var(--amber);
+    margin: 0 0 10px;
+    padding: 7px 8px;
+    background: #1a1610;
+    border-radius: 6px;
+    border-left: 3px solid var(--amber);
+  }
+  .inspect .trap b { font-weight: 650; margin-right: 4px; }
+  .inspect .live { font-size: 12px; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+    color: var(--cyan); margin: 0 0 10px; }
+  .inspect .plist { margin: 0 0 10px; display: grid; gap: 2px; }
+  .inspect .prow { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+    font-size: 11px; }
+  .inspect .prow code { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+    color: var(--ink); font-size: 11px; }
+  .inspect .prow b { font-variant-numeric: tabular-nums; color: var(--cyan); font-weight: 650;
+    font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }
+}

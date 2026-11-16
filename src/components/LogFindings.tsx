@@ -1,3 +1,4 @@
+import "./LogFindings.css";
 import { useEffect, useState } from "react";
 import { useT } from "../i18n/i18n";
 import { openAssistant } from "../lib/assistantAsk";

@@ -1,0 +1,139 @@
+@layer components {
+  /* Link status chip. The status part opens the connection panel; the optional action part does one step. */
+  .lc {
+    position: relative; display: flex; align-items: stretch; flex: 0 1 auto; min-width: 0; height: 30px;
+    border-radius: 15px; background: var(--sunk); box-shadow: inset 0 0 0 1px var(--btn); color: #c9d3de;
+  }
+  .lc.open { outline: 1px solid var(--cyan); outline-offset: 2px; }
+  .lc > button {
+    margin: 0; border: 0; background: transparent; color: inherit; font: inherit; filter: none; box-shadow: none;
+  }
+  .lc > .lc-main {
+    position: relative; display: flex; align-items: center; gap: 8px; min-width: 0;
+    padding: 0 10px 0 12px; border-radius: 15px; overflow: hidden; white-space: nowrap;
+    font-size: 12px; font-weight: 650;
+  }
+  .lc > .lc-main:hover { background: rgba(255, 255, 255, 0.05); }
+  .lc-text { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .lc-text > span + span::before { content: " · "; color: var(--dim); white-space: pre; }
+  .lc-url { font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-weight: 500; }
+  .lc-hz { color: var(--ink-2); font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+  .lc-src.sitl { color: var(--ok); }
+  .lc-src.board { color: var(--hot); }
+  .lc-name { color: var(--ink); }
+  .lc-dot {
+    width: 8px; height: 8px; flex: none; border-radius: 50%;
+    background: transparent; box-shadow: inset 0 0 0 2px #6f7c8c;
+  }
+  .lc-caret {
+    width: 10px; height: 6px; flex: none; opacity: 0.8;
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%238b98a8' d='M1 1l4 4 4-4'/></svg>") no-repeat center;
+  }
+  .lc.open .lc-caret { transform: rotate(180deg); }
+  .lc-spin {
+    width: 11px; height: 11px; flex: none; box-sizing: border-box; border-radius: 50%;
+    border: 1.5px solid #5a4524; border-top-color: var(--amber);
+    animation: lua-spin 0.7s linear infinite;
+  }
+  .lc-bar { position: absolute; left: 10px; right: 10px; bottom: 2px; height: 2px; border-radius: 99px; background: #1f3324; overflow: hidden; }
+  .lc-bar > span { display: block; height: 100%; background: var(--ok); transition: width 0.12s linear; }
+  .lc > .lc-act {
+    flex: none; padding: 0 12px; border-radius: 0 15px 15px 0;
+    border-left: 1px solid var(--btn); color: var(--cyan); font-size: 12px; font-weight: 650; white-space: nowrap;
+  }
+  .lc > .lc-act:hover { background: rgba(79, 195, 247, 0.1); }
+  .lc.on { background: #13241a; box-shadow: inset 0 0 0 1px #2e5a38; color: #c8e6c9; }
+  .lc.on > .lc-act { border-left-color: #2e5a38; }
+  .lc.on .lc-dot, .lc.other .lc-dot, .lc-panel.on .lc-dot, .lc-panel.other .lc-dot { background: var(--ok); box-shadow: none; }
+  .lc.armed .lc-dot { box-shadow: 0 0 0 2px #13241a, 0 0 0 3.5px var(--amber); }
+  .lc.wait, .lc.boot { background: #2a2112; box-shadow: inset 0 0 0 1px #5a4524; color: var(--amber); }
+  .lc.bad { background: #2a1414; box-shadow: inset 0 0 0 1px #6a3030; color: #ff8a80; }
+  .lc.bad .lc-dot, .lc-panel.bad .lc-dot { background: var(--hot); box-shadow: none; }
+  .lc.bad > .lc-act { color: #ff8a80; border-left-color: #6a3030; }
+  .lc.bad > .lc-act:hover { background: rgba(239, 83, 80, 0.12); }
+  .lc.other > .lc-act { color: var(--amber); border-left-color: #5a4524; }
+  .lc.other > .lc-act:hover { background: rgba(255, 183, 77, 0.1); }
+
+  .lc-back { display: none; }
+  .lc-panel {
+    position: fixed; z-index: var(--z-link); top: var(--lc-top, 48px); right: var(--lc-right, 16px);
+    width: min(340px, calc(100vw - 16px)); max-height: calc(100dvh - var(--lc-top, 48px) - 12px);
+    box-sizing: border-box; overflow: auto; outline: none;
+    display: flex; flex-direction: column; gap: 12px; padding: 14px;
+    background: #1e232a; color: var(--ink); border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55), inset 0 0 0 1px var(--btn);
+  }
+  .lc-grab { display: none; }
+  .lc-head { display: flex; align-items: flex-start; gap: 10px; }
+  .lc-head > .lc-dot, .lc-head > .lc-spin { margin-top: 5px; }
+  .lc-head > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .lc-head b { font-size: 14px; font-weight: 650; }
+  .lc-head > div > span {
+    color: var(--dim); font: 12px/1.35 "Cascadia Mono", Consolas, ui-monospace, monospace; overflow-wrap: anywhere;
+  }
+  .lc-armed { color: var(--amber); }
+  .lc-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .lc-tiles > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 6px 8px; border-radius: 8px; background: var(--sunk); }
+  .lc-tiles span, .lc-recent > span { color: var(--dim); font-size: 10px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
+  .lc-tiles b {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font: 650 13px/1.3 "Cascadia Mono", Consolas, ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+  .lc-form { display: flex; flex-direction: column; gap: 10px; margin: 0; }
+  .lc-row { display: flex; gap: 6px; }
+  .lc-row select, .lc-row input {
+    min-width: 0; height: 32px; box-sizing: border-box; margin: 0; padding: 0 8px;
+    border: 0; border-radius: 8px; background: var(--sunk); color: var(--ink);
+    font: 13px/1.3 "Cascadia Mono", Consolas, ui-monospace, monospace;
+  }
+  .lc-row input, .lc-row .lc-port { flex: 1; }
+  .lc-row .lc-baud { flex: 0 0 6em; }
+  .lc-recent ul { display: flex; flex-direction: column; gap: 3px; max-height: 168px; overflow: auto; margin: 4px 0 0; padding: 0; list-style: none; }
+  .lc-recent button {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; height: 30px;
+    margin: 0; padding: 0 10px; border-radius: 8px; background: var(--sunk); color: #c9d3de; text-align: left;
+    font: 12px/1.3 "Cascadia Mono", Consolas, ui-monospace, monospace; filter: none; box-shadow: none;
+  }
+  .lc-recent button:hover { background: #161b22; color: var(--ink); }
+  .lc-recent button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lc-recent em { flex: none; color: var(--ok); font: 600 11px/1 "Segoe UI", system-ui, sans-serif; font-style: normal; }
+  .lc-btns { display: flex; gap: 8px; }
+  .lc-btns button, .lc-panel .lc-wide { flex: 1; height: 32px; margin: 0; padding: 0 10px; font-size: 13px; font-weight: 650; }
+  .lc-panel .lc-wide { flex: none; background: #332818; color: var(--amber); }
+  .lc-panel .lc-wide:hover { background: #40301c; }
+  /* Linked and on Home: going to the vehicle is not a warning. */
+  .lc-panel.on .lc-wide { background: #10232e; color: var(--cyan); }
+  .lc-panel.on .lc-wide:hover { background: #143040; }
+  .lc-btns .lc-stop { background: #3a1c1c; color: #ff8a80; }
+  .lc-btns .lc-stop:hover { background: #4a2222; }
+  .lc-btns .lc-go { background: #0e3746; color: var(--cyan); }
+  .lc-btns .lc-go:hover { background: #124659; color: var(--ink); }
+  @media (pointer: coarse) {
+    .lc { height: 44px; border-radius: 22px; }
+    .lc > .lc-main { padding: 0 12px 0 14px; border-radius: 22px; font-size: 13px; }
+    .lc > .lc-act { padding: 0 14px; border-radius: 0 22px 22px 0; font-size: 13px; }
+    .lc-row select, .lc-row input, .lc-recent button, .lc-btns button, .lc-panel .lc-wide { height: 44px; }
+  }
+  @media (max-width: 720px) {
+    .lc { flex: 1 1 auto; }
+    /* The chip takes the free width; its button fills it, with the caret at the right edge. */
+    .lc > .lc-main { flex: 1 1 auto; }
+    .lc > .lc-main > .lc-caret { margin-left: auto; }
+    .lc-frame, .lc-frame + span::before { display: none; }
+    .lc-back { display: block; position: fixed; inset: 0; z-index: var(--z-sheet); background: rgba(4, 6, 8, 0.55); }
+    .lc-panel {
+      top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 85dvh;
+      gap: 14px; padding: 8px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+      border-radius: 18px 18px 0 0;
+    }
+    .lc-grab { display: block; align-self: center; width: 40px; height: 4px; border-radius: 2px; background: #4a5462; }
+    .lc-row select, .lc-row input { height: 44px; font-size: 16px; }
+    .lc-recent button, .lc-btns button, .lc-panel .lc-wide { height: 44px; font-size: 14px; }
+  }
+  /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
+  button:where(.lc > button):hover { background: var(--btn-hover); }
+  button:where(.lc > button, .lc-recent button).on { box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35); filter: brightness(1.12); }
+  button:where(.lc.on, .lc.bad):disabled:hover { background: var(--btn); }
+  .ai-log-progress i.wait b { width: 35%; animation: log-erase 1.1s ease-in-out infinite; }
+}

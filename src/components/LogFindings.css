@@ -1,0 +1,15 @@
+@layer components {
+  .log-fd { display: flex; flex-direction: column; gap: 6px; }
+  .log-fd h4 { margin: 0 0 2px; color: var(--dim); font-size: 10px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; }
+  .log-fd .log-pop-line > span:last-child { color: var(--ink); }
+  .log-fd-call { display: grid; grid-template-columns: minmax(0, 15em) minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--line-soft); }
+  .log-fd-call > span:first-child { color: var(--dim); font-size: 11px; }
+  .log-fd-call > span:first-child b { color: var(--ink); font-weight: 600; }
+  .log-fd-call > span:first-child small { display: block; color: #6b7785; font-size: 10px; }
+  .log-fd-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 4px 14px 12px; font-size: 12px; }
+  .log-fd-body p { margin: 0; }
+  .log-fd-foot { flex: none; display: flex; justify-content: flex-end; padding: 8px 12px; border-top: 1px solid var(--line-soft); }
+  .log-fd-call.off > span:last-child { color: var(--dim); }
+  .log-pop-line { display: flex; gap: 10px; align-items: baseline; }
+  .log-pop-line > span:last-child { color: var(--dim); }
+}

@@ -1,0 +1,27 @@
+@layer components {
+  .md-col { width: 250px; }
+  .md-art { width: 240px; height: auto; }
+  /* The shared .sw-art rules (components/setup-steps.css) are in a lower layer now; they used to win here. */
+  .sw-art.md-col { width: 100%; }
+  .sw-art .md-art { width: 100%; }
+  .md-band rect { fill: var(--card); stroke: var(--line); stroke-width: 1.5; }
+  .md-band.on rect { fill: var(--cyan-bg); stroke: var(--cyan); }
+  .md-num { fill: var(--dim); font-size: 11px; font-weight: 700; }
+  .md-name { fill: var(--ink-2); font-size: 12px; }
+  .md-band.on .md-name, .md-band.on .md-num { fill: var(--ink); font-weight: 650; }
+  .md-rail { stroke: var(--line-strong); stroke-width: 3; stroke-linecap: round; }
+  .md-marker { fill: var(--cyan); }
+  .md-tr { display: grid; grid-template-columns: 24px 90px minmax(0, 200px) minmax(0, 1fr); align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid #1d232c; font-size: 12px; }
+  .md-tr:first-child { border-top: 0; }
+  .md-tr.on { background: var(--cyan-bg); box-shadow: inset 2px 0 var(--cyan); }
+  .md-tr select, .md-wrow select { height: 30px; border-radius: 7px; background: var(--sunk); color: var(--ink); border: 1px solid var(--line); font: inherit; padding: 0 8px; }
+  .md-warn { color: var(--amber); }
+  .md-chs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .md-ch { display: flex; justify-content: space-between; margin: 0; padding: 6px 8px; border-radius: 8px; background: var(--card); border: 1px solid var(--line-soft); color: inherit; font-size: 12px; cursor: pointer; }
+  .md-ch.on { border-color: var(--cyan); background: var(--cyan-bg); }
+  .md-wiz { display: flex; flex-direction: column; gap: 4px; }
+  .md-wrow { display: grid; grid-template-columns: 24px minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: center; padding: 4px 8px; border-radius: 8px; font-size: 12px; }
+  .md-wrow.on { background: var(--cyan-bg); box-shadow: inset 2px 0 var(--cyan); }
+  /* Base button states (styles/buttons.css) are in a lower layer now; these keep the ones that used to win here. */
+  button:where(.md-ch):hover { background: var(--btn-hover); }
+}
