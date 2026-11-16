@@ -17,7 +17,7 @@ import { ControllerView } from "./components/ControllerView";
 import { usePhone } from "./lib/phone";
 import { useT } from "./i18n/i18n";
 import { externalPage, openExternal } from "./lib/open";
-import { followDetachedNav, navigate, navHref, openAppLink, useNavParam } from "./lib/nav";
+import { followDetachedNav, followOsLinks, navigate, navHref, openAppLink, useNavParam } from "./lib/nav";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
 import { APP_HTTP, formatLink, loadLink, loadLinkHistory, parseLink, rememberLink, saveLink, type LinkKind } from "./mav/link";
@@ -269,6 +269,7 @@ export function App() {
   }, []);
 
   useEffect(() => followDetachedNav(), []);
+  useEffect(() => followOsLinks(), []);
 
   useEffect(() => {
     const onClick = (ev: MouseEvent) => {

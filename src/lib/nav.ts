@@ -11,10 +11,11 @@
  *
  * App links: `arduloops://open?frame=copter&ws=controller&pane=logs`, or the same query as a relative link
  * (`?frame=copter&ws=controller&pane=logs`). The assistant offers them; clicking one moves the main window
- * here instead of opening a browser.
+ * here instead of opening a browser. The desktop app registers the scheme with the OS (src-tauri/src/lib.rs):
+ * the link that started the app comes from `take_app_link`, and a link while it runs is an `app-link` event.
  */
 import { useSyncExternalStore } from "react";
-import { isDetachedWindow, onWindowMsg, postWindowMsg } from "./detach";
+import { isDetachedWindow, isTauri, onWindowMsg, postWindowMsg } from "./detach";
 
 export const NAV_LEVELS = ["frame", "ws", "pane", "step"] as const;
 export type NavKey = (typeof NAV_LEVELS)[number] | "board";
@@ -138,11 +139,11 @@ export function appLinkNav(href: string): Nav | null {
 /**
  * Opens an app link. In a detached window the main window moves. False when the href is not an app link.
  */
-export function openAppLink(href: string): boolean {
+export function openAppLink(href: string, opts: { replace?: boolean } = {}): boolean {
   const nav = appLinkNav(href);
   if (!nav) return false;
   if (isDetachedWindow()) postWindowMsg({ type: "navigate", nav });
-  else navigate(nav);
+  else navigate(nav, opts);
   return true;
 }
 
@@ -158,4 +159,28 @@ export function followDetachedNav(): () => void {
     navigate(nav);
     window.focus();
   });
+}
+
+/** The main window follows arduloops:// links the OS hands to the running desktop app. */
+export function followOsLinks(): () => void {
+  if (!isTauri()) return () => {};
+  let stop: (() => void) | null = null;
+  let gone = false;
+  void import("@tauri-apps/api/event")
+    .then(({ listen }) => listen<string>("app-link", (ev) => {
+      if (typeof ev.payload === "string") openAppLink(ev.payload);
+    }))
+    .then(async (unlisten) => {
+      if (gone) return unlisten();
+      stop = unlisten;
+      // The link that started the app: the first screen becomes that place, without a Back step to the default.
+      const { invoke } = await import("@tauri-apps/api/core");
+      const first = await invoke<string | null>("take_app_link");
+      if (!gone && first) openAppLink(first, { replace: true });
+    })
+    .catch(() => {});
+  return () => {
+    gone = true;
+    stop?.();
+  };
 }
