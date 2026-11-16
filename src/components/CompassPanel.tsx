@@ -1,3 +1,4 @@
+import "./CompassPanel.css";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { Glance } from "../lib/setupSteps";
 import { useT } from "../i18n/i18n";

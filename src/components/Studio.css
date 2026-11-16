@@ -1,0 +1,73 @@
+.studio-wrap { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.studio-bar { flex: none; display: flex; align-items: center; justify-content: flex-start; min-height: 22px; }
+.studio {
+  flex: 1; min-height: 0; min-width: 0;
+  display: grid;
+  grid-template-columns: var(--studio-col1, 540px) 8px minmax(0, 1fr);
+  grid-template-rows: minmax(0, var(--studio-row-top, 1fr)) 8px minmax(0, var(--studio-row-bot, 1fr));
+  column-gap: 0; row-gap: 0;
+}
+.studio.is-rest {
+  grid-template-areas:
+    "scheme gutter loop"
+    "scheme gutter hgutter"
+    "scheme gutter scope";
+}
+.studio.is-loop {
+  grid-template-rows: minmax(0, var(--studio-row-top, 1fr)) 8px minmax(110px, var(--studio-row-bot, 1fr));
+  grid-template-areas:
+    "scheme  gutter loop"
+    "hgutter gutter loop"
+    "scope   gutter loop";
+}
+.studio.is-scope {
+  grid-template-rows: minmax(0, var(--studio-row-top, 1fr)) 8px minmax(110px, var(--studio-row-bot, 1fr));
+  grid-template-areas:
+    "scheme  gutter scope"
+    "hgutter gutter scope"
+    "loop    gutter scope";
+}
+.studio-gutter {
+  grid-area: gutter; cursor: col-resize; position: relative; touch-action: none; z-index: 2;
+}
+.studio-gutter.is-row { grid-area: hgutter; cursor: row-resize; }
+.studio-gutter::before {
+  content: ""; position: absolute; inset: 8px 2px; border-radius: 3px; background: #2a333c;
+}
+.studio-gutter.is-row::before { inset: 2px 8px; }
+.studio-gutter:hover::before,
+.studio-gutter:active::before { background: var(--cyan); }
+.pane {
+  min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  background: #0c0e11; border-radius: 10px; overflow: hidden;
+}
+.pane.pane-scheme { grid-area: scheme; background: transparent; }
+.pane-head {
+  flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 8px 2px;
+  position: relative; z-index: 7;
+}
+.pane-head b { font-size: 12px; font-weight: 650; letter-spacing: 0.02em; white-space: nowrap; }
+.pane-slot {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+}
+.pane-slot > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pane-exp {
+  margin: 0; padding: 2px; width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #1a1e24; color: var(--dim); border-radius: 6px;
+}
+.pane-exp svg { width: 14px; height: 14px; display: block; }
+.pane-exp:hover { color: var(--ink); }
+.pane-exp.on { color: var(--cyan); }
+.pane.pane-scheme { position: relative; }
+.pane-pop-corner { position: absolute; top: 6px; right: 6px; z-index: 8; opacity: 0.7; }
+.pane-pop-corner:hover { opacity: 1; }
+.pane-away { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--dim); font-size: 12px; background: #0c0e11; border-radius: 10px; }
+
+@media (max-width: 900px) {
+  .studio { grid-template-columns: min(var(--studio-col1, 540px), 46%) 8px minmax(0, 1fr); }
+}
+/* Tablet landscape and small laptops: the scheme column never takes more than about a third of the studio. */
+@media (min-width: 901px) and (max-width: 1279px) {
+  .studio { grid-template-columns: min(var(--studio-col1, 540px), 38%) 8px minmax(0, 1fr); }
+}

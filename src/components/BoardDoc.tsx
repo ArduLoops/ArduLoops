@@ -1,3 +1,4 @@
+import "./BoardDoc.css";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import CodeMirror from "@uiw/react-codemirror";

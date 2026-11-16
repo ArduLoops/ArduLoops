@@ -1,3 +1,4 @@
+import "./AxisSwitch.css";
 import { axisLabel, type Axis } from "../mav/axis";
 import { useT } from "../i18n/i18n";
 

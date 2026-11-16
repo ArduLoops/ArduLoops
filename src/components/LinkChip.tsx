@@ -1,3 +1,4 @@
+import "./LinkChip.css";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { tDetail, useT } from "../i18n/i18n";

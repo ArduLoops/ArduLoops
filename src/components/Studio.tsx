@@ -1,3 +1,4 @@
+import "./Studio.css";
 import { createContext, useContext, useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n/i18n";

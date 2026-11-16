@@ -1,3 +1,4 @@
+import "./SetupWizards.css";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { sticksCalibrated } from "../lib/radio";
 import type { Glance } from "../lib/setupSteps";

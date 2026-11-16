@@ -1,0 +1,192 @@
+.sim-rail {
+  grid-column: 1; grid-row: 1 / -1; min-width: 0; overflow: hidden;
+  display: flex; flex-direction: column;
+  background: none;
+  border-radius: 0;
+  padding: 12px 8px 16px 16px;
+}
+.sim-rail[hidden] { display: none; }
+.sim-body { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+.sim-launch {
+  margin: 0 0 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2a3140;
+}
+.sim-launch .sim-choice { margin: 0 0 8px; }
+.sim-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0 0 8px; }
+.sim-pick button {
+  position: relative; margin: 0; padding: 8px 4px 6px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: #0c0e11; color: var(--dim);
+  box-shadow: inset 0 0 0 1px #2a3140; filter: none;
+}
+.sim-pick button:hover { background: #12161c; color: var(--ink); }
+.sim-pick button.on {
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--cyan);
+  filter: none;
+}
+.sim-pick button.busy {
+  color: var(--amber);
+  box-shadow: inset 0 0 0 1px var(--amber), 0 0 10px rgba(255, 183, 77, 0.22);
+  filter: none;
+}
+.sim-pick button.live {
+  color: var(--ok);
+  box-shadow: inset 0 0 0 1px var(--ok), 0 0 14px rgba(129, 199, 132, 0.32);
+  filter: none;
+  animation: sim-live 1.8s ease-in-out infinite;
+}
+.sim-pick button:disabled { opacity: 1; }
+.sim-pick button:disabled:hover { background: #0c0e11; }
+.sim-pick button:disabled:not(.on):not(.live):not(.busy) { opacity: 0.42; color: var(--dim); }
+.sim-pick svg { width: 100%; height: 52px; display: block; }
+.sim-pick b { font-size: 11px; font-weight: 650; letter-spacing: 0.02em; }
+.sim-pick .pip {
+  position: absolute; top: 6px; right: 6px;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+}
+@keyframes sim-live {
+  0%, 100% { box-shadow: inset 0 0 0 1px var(--ok), 0 0 8px rgba(129, 199, 132, 0.18); }
+  50% { box-shadow: inset 0 0 0 1px var(--ok), 0 0 16px rgba(129, 199, 132, 0.42); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sim-pick button.live { animation: none; }
+}
+.sim-run {
+  display: block; width: 100%; margin: 0 0 6px; padding: 4px 8px;
+  font-size: 12px; font-weight: 650;
+}
+.sim-run.start {
+  color: var(--ok); background: #1a3320;
+  box-shadow: inset 0 0 0 1px #2e5a38;
+}
+.sim-run.start:hover { color: var(--ok); background: #214028; }
+.sim-run.stop {
+  color: var(--hot); background: #3a1c1c;
+  box-shadow: inset 0 0 0 1px #6a3030;
+}
+.sim-run.stop:hover { color: var(--hot); background: #4a2222; }
+.sim-run.busy {
+  color: var(--amber); background: #332818;
+  box-shadow: inset 0 0 0 1px #6a5428;
+}
+.sim-run.busy:hover { color: var(--amber); background: #40301c; }
+.sim-status {
+  margin: 0 0 8px; font-size: 11px; color: var(--dim); line-height: 1.35;
+  min-height: 2.6em;
+}
+.sim-links {
+  margin: -4px 0 8px; padding: 0; list-style: none;
+  font-size: 11px; line-height: 1.35; color: var(--dim);
+}
+.sim-home {
+  display: block; width: 100%; margin: 2px 0 8px; background: #0c0e11; color: var(--ink);
+  border: 0; border-radius: 6px; padding: 4px 8px;
+  font: 11px/1.3 "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+.sim-home:disabled { opacity: 0.55; }
+.sim-sec { margin: 0 0 6px; }
+.sim-sec > summary { font-size: 11px; }
+.sim-rail .sim-sec > summary { display: flex; align-items: center; gap: 6px; }
+.sim-rail .sim-sec > summary::before { content: "▸"; }
+.sim-rail .sim-sec[open] > summary::before { content: "▾"; }
+.sim-rail .sim-sec[open] { padding-left: 12px; }
+.sim-rail .sim-sec[open] > summary { margin-left: -12px; }
+.sim-sum {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+.sim-ico {
+  width: 13px; height: 13px; flex: none;
+  stroke: currentColor; fill: none; stroke-width: 1.4;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.sim-rail .sim-sec > summary.sim-alert { color: var(--hot); }
+.sim-pip {
+  margin-left: auto; width: 6px; height: 6px; border-radius: 99px; background: var(--hot);
+  box-shadow: 0 0 6px rgba(239, 83, 80, 0.7);
+}
+.sim-pip:not(:empty) {
+  width: auto; min-width: 14px; height: 14px; padding: 0 4px;
+  color: #1a0c0c; font-size: 10px; font-style: normal; font-weight: 700;
+  line-height: 14px; text-align: center; letter-spacing: 0; text-transform: none;
+}
+.sim-rail .srow.wide {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 3.6em;
+  gap: 2px 8px;
+  margin: 6px 0 8px;
+  font-size: 11px;
+}
+.sim-rail .srow.wide span { grid-column: 1 / -1; color: var(--dim); }
+.sim-rail .srow.wide input { width: 100%; min-width: 0; }
+.sim-rail .srow.wide b { font-size: 11px; }
+.sim-rail .srow.wide.hot > span,
+.sim-rail .srow.wide.hot > b { color: var(--hot); }
+.sim-rail .sim-speed-btns {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.sim-rail .sim-speed-btns button {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+}
+.sim-tog { width: 100%; margin: 4px 0; padding: 2px 0; justify-content: flex-start; }
+.sim-note { margin: 4px 0 8px; font-size: 11px; color: var(--dim); line-height: 1.35; }
+.sim-sec .sim-init { margin: 0 0 8px; padding: 2px 10px; font-size: 12px; }
+.sim-sec .init-meter { margin: 0 0 8px; }
+.sim-motors { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 8px; }
+.sim-motors .map-sw { margin: 0; padding: 2px 0; }
+.sim-choice { margin: 6px 0 8px; }
+.sim-choice > span {
+  display: block; font-size: 11px; color: var(--dim); margin-bottom: 4px;
+}
+.sim-choice > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.sim-choice button { margin: 0; padding: 3px 7px; font-size: 11px; }
+.init-meter {
+  margin-top: 8px; height: 6px; border-radius: 99px; background: #0c0e11; overflow: hidden;
+}
+.init-meter i {
+  display: block; height: 100%; width: 0; background: var(--cyan);
+  transition: width 0.12s linear;
+}
+.pane-slot .map-sw,
+.pane-slot .watch-sel { margin-left: auto; flex: none; }
+.plot-head > .map-sw { margin-left: auto; flex: none; }
+.loop-xgain .srow.wide { grid-template-columns: 44px 1fr 62px; margin: 3px 0; }
+.loop-xgain .srow b { color: var(--hot); }
+.srow { display: grid; grid-template-columns: 16px 1fr 46px; align-items: center;
+  gap: 8px; margin: 4px 0; font-size: 12px; color: var(--dim); }
+.srow b { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 650;
+  text-align: right; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }
+.srow.wide { grid-template-columns: 40px 1fr 62px; }
+.more { flex: none; margin: 0 0 8px; }
+.more > summary {
+  cursor: pointer; color: var(--dim); font-size: 11px; letter-spacing: 0.04em;
+  text-transform: uppercase; list-style: none; padding: 4px 0;
+}
+.more > summary::-webkit-details-marker { display: none; }
+.more > summary::before { content: "▸ "; }
+.more[open] > summary::before { content: "▾ "; }
+.more[open] > summary { color: var(--ink); margin-bottom: 2px; }
+.cmap-bar .map-sw { margin-left: auto; font-size: 11px; font-weight: 500; }
+.inspect .map-sw { flex: none; font-size: 11px; font-weight: 500; }
+@media (max-width: 720px) {
+  .app.sitl-open .sim-rail {
+    position: absolute;
+    z-index: 8;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(280px, 88vw);
+    background: var(--bg);
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.45);
+  }
+}

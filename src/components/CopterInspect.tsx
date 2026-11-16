@@ -1,3 +1,4 @@
+import "./CopterInspect.css";
 import {
   BAND_COPY,
   BAND_LABEL,

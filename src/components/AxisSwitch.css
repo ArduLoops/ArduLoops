@@ -1,0 +1,11 @@
+.studio-bar .axis-sw { margin-left: auto; }
+.studio-win header .axis-sw { margin: 0 6px 0 auto; }
+.float-win header .axis-sw button { width: auto; height: 24px; padding: 2px 8px; display: inline-block; color: var(--dim); }
+.float-win header .axis-sw button.on { color: var(--ink); background: #0c0e11; }
+.tabs .axis-sw { margin-left: auto; }
+.axis-sw { margin-left: auto; display: flex; gap: 2px; flex: none; }
+.axis-sw button { margin: 0; padding: 2px 7px; font-size: 11px; font-weight: 650;
+  background: transparent; color: var(--dim); border-radius: 6px; }
+.axis-sw button:hover { background: #2a3140; color: var(--ink); }
+.axis-sw button.on { color: var(--ink); background: #0c0e11;
+  box-shadow: inset 0 0 0 1px #3a4652; filter: none; }

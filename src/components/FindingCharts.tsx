@@ -1,3 +1,4 @@
+import "./FindingCharts.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FloatWindow } from "./FloatWindow";
 

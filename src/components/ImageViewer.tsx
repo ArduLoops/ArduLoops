@@ -1,3 +1,4 @@
+import "./ImageViewer.css";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n/i18n";

@@ -1,0 +1,66 @@
+// The cascade order of the app CSS. Each component imports its own file too; this list only fixes
+// the order (the first import of a file decides its place), so a later rule still wins a tie the way it
+// did when everything was one styles.css. A new file can go anywhere after styles.css unless it has to
+// beat or lose to a rule of equal specificity in another file; then put it after or before that file.
+// Third-party CSS comes first, as it did before the split.
+import "katex/dist/katex.min.css";
+import "./styles.css";
+import "./components/LinkChip.css";
+import "./components/WizardHost.css";
+import "./components/MainSplit.css";
+import "./components/Disconnected.css";
+import "./components/BoardDoc.css";
+import "./components/ImageViewer.css";
+import "./components/ModesStep.css";
+import "./components/FailsafeStep.css";
+import "./components/RadioStep.css";
+import "./components/BatteryStep.css";
+import "./components/ArmingChecks.css";
+import "./components/StepPreArm.css";
+import "./components/AccelStep.css";
+import "./components/SensorWizard.css";
+import "./components/MotorsStep.css";
+import "./components/PlaneOutputsStep.css";
+import "./components/FrameStep.css";
+import "./components/setup-steps.css";
+import "./components/PlaneAirframeStep.css";
+import "./components/OutputSetup.css";
+import "./components/CompassPanel.css";
+import "./components/MotorDiagram.css";
+import "./components/MotorSetup.css";
+import "./components/SetupWizards.css";
+import "./styles/unused.css";
+import "./components/VehicleLogs.css";
+import "./components/LogFindings.css";
+import "./components/BoardView.css";
+import "./components/BoardChats.css";
+import "./components/ControllerBoard.css";
+import "./components/ScriptsLibrary.css";
+import "./components/LuaSource.css";
+import "./components/library.css";
+import "./components/FirmwareLibrary.css";
+import "./components/ParameterLibrary.css";
+import "./components/Studio.css";
+import "./components/StudioWindows.css";
+import "./components/AxisSwitch.css";
+import "./components/TracePanes.css";
+import "./components/SimRail.css";
+import "./components/Cascade.css";
+import "./components/SchemeKnobs.css";
+import "./components/Loop.css";
+import "./components/Readouts.css";
+import "./components/Craft.css";
+import "./styles/buttons.css";
+import "./components/HardwareSetup.css";
+import "./components/Aside.css";
+import "./components/CopterInspect.css";
+import "./styles/responsive.css";
+import "./components/Assistant.css";
+import "./components/LivePlots.css";
+import "./components/FloatWindow.css";
+import "./components/FindingCharts.css";
+import "./components/AuditLibrary.css";
+import "./components/LabDialog.css";
+import "./styles/phone-dialogs.css";
+import "./components/MissionView.css";
+import "./components/ProfileForm.css";

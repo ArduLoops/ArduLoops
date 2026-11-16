@@ -1,3 +1,4 @@
+import "./PlaneOutputsStep.css";
 import { useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
 import { motorFrame, motorOfFunction } from "../lib/motorFrames";

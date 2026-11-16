@@ -1,3 +1,4 @@
+import "./ModesStep.css";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
 import { NEEDS_TEXT, SLOT_BANDS, canFly, modeSlot, sources, useModes, type Mode } from "../lib/flightModes";

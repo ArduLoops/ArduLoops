@@ -1,3 +1,4 @@
+import "./ControllerBoard.css";
 import { memo, useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";

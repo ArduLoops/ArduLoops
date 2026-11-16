@@ -1,0 +1,17 @@
+/* Phone layout of the shared dialogs (.modal-back, .modal). After the component files, so it still beats
+   component sizes such as .ai-bench. */
+
+@media (max-width: 768px) {
+  .modal-back {
+    padding-top: max(var(--status-top, 40px), 12px);
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 12px);
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .modal {
+    width: 100%;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - max(var(--status-top, 40px), 12px) - max(env(safe-area-inset-bottom, 0px), 12px) - 8px);
+    padding: 12px 14px 14px;
+  }
+}

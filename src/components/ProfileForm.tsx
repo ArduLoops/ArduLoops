@@ -1,3 +1,4 @@
+import "./ProfileForm.css";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import { joinNote, markShape, splitNote } from "../lib/vehicleHeader";

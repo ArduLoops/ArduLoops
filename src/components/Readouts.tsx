@@ -1,3 +1,4 @@
+import "./Readouts.css";
 import { useMemo, useState, type FormEvent } from "react";
 import { useT } from "../i18n/i18n";
 import { getLatest } from "../mav/store";

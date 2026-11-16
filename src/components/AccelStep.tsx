@@ -1,3 +1,4 @@
+import "./AccelStep.css";
 import { useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";

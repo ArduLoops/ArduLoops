@@ -1,3 +1,4 @@
+import "./VehicleLogs.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import { openAssistant } from "../lib/assistantAsk";

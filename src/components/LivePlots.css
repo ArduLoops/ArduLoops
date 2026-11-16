@@ -1,0 +1,35 @@
+.ai-charts { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
+.ai-chart-card {
+  display: flex; flex-direction: column; flex: 1 1 220px; width: auto; min-width: min(100%, 220px); max-width: 100%;
+  height: auto; margin: 0; padding: 8px 10px 8px; overflow: hidden; text-align: left;
+  border-radius: 12px; background: #14181d; color: var(--ink); box-shadow: inset 0 0 0 1px #2a3140; cursor: pointer;
+}
+.ai-chart-card b, .ai-chart-card span { display: block; min-width: 0; }
+.ai-chart-card b {
+  font-size: 12px; font-weight: 600; white-space: normal;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+.ai-chart-card span { margin-top: 2px; color: var(--dim); font-size: 11px; font-weight: 450; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
+.ai-live-card { flex: 1 1 100%; padding: 4px 0 6px; cursor: default; }
+.ai-live-open {
+  display: block; width: 100%; margin: 0; padding: 4px 10px 6px; background: transparent; color: inherit;
+  text-align: left; cursor: pointer; border-radius: 8px;
+}
+.ai-live-open b { font-size: 12px; font-weight: 600; }
+.ai-live-row {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 6px 10px 6px;
+  border-top: 1px solid #2a3140;
+}
+.ai-live-row input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--cyan); }
+.ai-live-row button {
+  display: block; flex: 1; min-width: 0; margin: 0; padding: 0; background: transparent; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.ai-live-row button b { display: block; font-size: 12px; font-weight: 600; white-space: normal; -webkit-line-clamp: unset; overflow: visible; }
+.ai-live-row button span {
+  display: block; margin-top: 2px; color: var(--dim); font-size: 11px; font-weight: 450; line-height: 1.35;
+  white-space: normal; -webkit-line-clamp: unset; overflow: visible;
+}
+.ai-live-row.off button b, .ai-live-row.off button span { color: var(--dim); }
+.ai-live-empty { margin: 0; padding: 16px; color: var(--dim); font-size: 13px; }
+.ai-live-plots { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #0c0e11; }

@@ -1,3 +1,4 @@
+import "./HardwareSetup.css";
 import { memo, useEffect, useState, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
 import { useStorePicked, useVehicle } from "../mav/view";

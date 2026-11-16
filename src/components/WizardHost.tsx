@@ -1,3 +1,4 @@
+import "./WizardHost.css";
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { ArmingChecksWindow } from "./ArmingChecks";
 import { FrameWizard } from "./FrameStep";

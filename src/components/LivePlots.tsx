@@ -1,3 +1,4 @@
+import "./LivePlots.css";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 import { customCatalog, customPane, liveFieldSig, resolveLine, type CatalogTrace, type Pane } from "../lib/traces";

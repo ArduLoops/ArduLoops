@@ -1,3 +1,4 @@
+import "./BoardChats.css";
 import { useEffect, useState } from "react";
 import { useT } from "../i18n/i18n";
 import { openAssistantChat } from "../lib/assistantAsk";

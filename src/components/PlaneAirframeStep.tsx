@@ -1,3 +1,4 @@
+import "./PlaneAirframeStep.css";
 import { useState, useSyncExternalStore } from "react";
 import { editVehicle, useVehicleFacts } from "./ControllerBoard";
 import { Icon } from "./MotorSetup";

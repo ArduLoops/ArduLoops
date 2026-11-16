@@ -1,3 +1,4 @@
+import "./MainSplit.css";
 import { Children, useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
 

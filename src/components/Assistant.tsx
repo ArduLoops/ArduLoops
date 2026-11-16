@@ -5,6 +5,7 @@ import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import "katex/dist/katex.min.css";
+import "./Assistant.css";
 import { ai, type AiStatus, type Chat, type CloudDoc, type LiveTurn, type LocalLog, type Msg, type Proposal } from "../assistant/api";
 import { DEFAULT_MODELS, formatTokens, formatUsd, loadCachedModels, syncModelsDev } from "../assistant/models";
 import { IMAGES_PER_MESSAGE, imageFiles, shrinkImage } from "../assistant/images";

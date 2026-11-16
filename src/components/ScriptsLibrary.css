@@ -1,0 +1,42 @@
+.work-bar { display: flex; align-items: center; width: 100%; min-height: 26px; flex: none; }
+.work-bar select {
+  height: 26px; margin: 0; max-width: 11em; padding: 0 6px; border: 1px solid #2a333c; border-radius: 6px;
+  background: #0c0e11; color: var(--ink); font: inherit; font-size: 12px;
+}
+.work-bar > .lua-bar-note {
+  margin-left: auto; min-width: 0; max-width: min(420px, 46%);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--dim); font-size: 12px; line-height: 16px;
+}
+.lua-files-head { display: flex; align-items: center; gap: 4px; min-height: 22px; }
+.side-nav .lua-files-head b { flex: 1; width: auto; margin: 0 0 0 6px; }
+.side-nav .lua-files-toggle {
+  flex: none; width: 22px; height: 22px; margin: 0 0 0 auto; padding: 0;
+  display: grid; place-items: center; justify-content: center;
+  background: transparent; color: var(--dim); border-radius: 5px;
+}
+.side-nav .lua-files-toggle:hover { color: var(--ink); background: #202b38; }
+.side-nav.shut { padding: 4px 3px; overflow: hidden; }
+.side-nav.shut .lua-files-toggle { margin: 0 auto; }
+.lua-main { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.lua-bar { flex-wrap: wrap; }
+.lua-bar b { display: inline-flex; align-items: center; gap: 6px; color: var(--ink); font-size: 12px; font-weight: 650; }
+.lua-spin {
+  width: 12px; height: 12px; border: 1.5px solid #2a333c; border-top-color: var(--cyan);
+  border-radius: 50%; animation: lua-spin 0.7s linear infinite;
+}
+.lua-editor.busy { pointer-events: none; user-select: none; }
+.lua-bar button { margin: 0; padding: 2px 8px; font-size: 11px; }
+.lua-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.lua-lead { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.4; }
+.lua-lead button { margin-top: 6px; }
+.lua-name { display: flex; gap: 4px; padding: 0; flex: 0 1 220px; }
+.lua-name input { flex: 1; min-width: 0; height: 24px; margin: 0; padding: 0 6px; border: 1px solid #2a333c; border-radius: 5px; background: #111722; color: var(--ink); font: inherit; font-size: 12px; }
+.lua-name button { margin: 0; padding: 2px 8px; font-size: 11px; }
+.lua-editor { flex: 1; min-height: 0; overflow: hidden; border-radius: 8px; background: #0c0e11; }
+.lua-editor > * { height: 100%; min-height: 0; }
+.lua-editor .cm-editor { height: 100%; background: #0c0e11; }
+.lua-editor .cm-scroller { font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+.lua-editor .cm-line.cm-lua-quote { background: rgba(120, 190, 220, 0.10); }
+.lua-editor .cm-gutterElement.cm-lua-quote-gutter { color: var(--cyan); background: rgba(120, 190, 220, 0.18); }
+.ai-log-progress-head .lua-spin { flex: none; }

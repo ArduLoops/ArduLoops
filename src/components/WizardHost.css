@@ -1,0 +1,18 @@
+.modal.orient-wizard {
+  width: min(520px, 100%);
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - max(var(--status-top, 0px), 16px) - max(env(safe-area-inset-bottom, 0px), 16px) - 16px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+}
+@media (max-width: 768px) {
+  .modal.orient-wizard {
+    width: 100%;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - max(var(--status-top, 40px), 12px) - max(env(safe-area-inset-bottom, 0px), 12px) - 8px);
+  }
+}

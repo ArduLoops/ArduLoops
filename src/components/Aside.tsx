@@ -1,3 +1,4 @@
+import "./Aside.css";
 import { Readouts } from "./Readouts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { NODES as COPTER_NODES } from "../cascade";

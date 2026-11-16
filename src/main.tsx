@@ -1,10 +1,11 @@
+// CSS first, in its cascade order (see css-order.ts).
+import "./css-order";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { DetachedRoot } from "./Detached";
 import { announceMainWindow, detachedFromUrl, isDetachedWindow } from "./lib/detach";
 import { applyDocumentLang } from "./i18n/i18n";
-import "./styles.css";
 
 applyDocumentLang();
 
