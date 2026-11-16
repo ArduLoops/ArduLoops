@@ -313,8 +313,8 @@
     .app.sitl-open { grid-template-columns: minmax(0, 1fr); }
     .app.sitl-open header,
     .app.sitl-open .init-strip,
-    .app.sitl-open main,
-    .app.sitl-open .land-main { grid-column: 1; }
+    .app.sitl-open main { grid-column: 1; }
+    /* .land-main is in Disconnected.css: a component-layer rule there would beat this one. */
   }
   @media (max-height: 640px) {
     header { padding: 6px var(--edge) 4px; }
