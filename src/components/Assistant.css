@@ -653,4 +653,7 @@
   .ai-view-lead { color: var(--violet); font-size: 13px; }
   .proposal.profile { border-color: rgba(196, 181, 253, 0.45); }
   .proposal.profile .pf { margin-top: 8px; }
+  /* A link in the chat that opens a place in this app (lib/nav.ts). */
+  .ai-md a.ai-applink { text-decoration: none; border-bottom: 1px dashed currentColor; }
+  .ai-md a.ai-applink::after { content: " →"; }
 }

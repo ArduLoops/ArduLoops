@@ -1,4 +1,5 @@
 import { useT } from "../i18n/i18n";
+import { navigate, useNavParam, wsParam } from "../lib/nav";
 
 const TABS = [
   { id: "loops", label: "loops" },
@@ -12,6 +13,14 @@ export type WorkspaceId = (typeof TABS)[number]["id"];
 
 export const COPTER_WORKSPACES: WorkspaceId[] = ["loops", "firmware", "mission", "scripts", "audit"];
 export const PLANE_WORKSPACES: WorkspaceId[] = ["loops", "firmware", "mission", "scripts", "audit"];
+
+/** The workspace in the URL (`?ws=`). An id this frame does not have shows loops. */
+export function useWorkspace(ids: WorkspaceId[]): [WorkspaceId, (id: WorkspaceId) => void] {
+  const raw = useNavParam("ws");
+  const current = ids.find((id) => id === raw) ?? "loops";
+  const select = (id: WorkspaceId) => navigate({ ws: id === "loops" ? null : wsParam(id) });
+  return [current, select];
+}
 
 export function WorkspaceTabs({
   current,

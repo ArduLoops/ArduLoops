@@ -1,6 +1,6 @@
 import "./setup-steps.css";
 import "./HardwareSetup.css";
-import { memo, useEffect, useState, useSyncExternalStore } from "react";
+import { memo, useEffect, useSyncExternalStore } from "react";
 import { useT } from "../i18n/i18n";
 import { useStorePicked, useVehicle } from "../mav/view";
 import { BatteryStep } from "./BatteryStep";
@@ -20,7 +20,7 @@ import { nextSteps, prearmAsk, prearmStep, prearmTopic, stepOfParam, stepParamNa
 
 /** Done, or turned off on purpose: either way nothing is left to do on the step. */
 const settled = (state: StepState) => state === "done" || state === "off";
-import { OPEN_SETUP_OVERVIEW } from "../lib/setupNav";
+import { navigate, useNavParam } from "../lib/nav";
 import { askAssistant, openAssistant, showAssistant } from "../lib/assistantAsk";
 import { getSetupView, getWaitingCards, setSetupView, setViewFocus, subscribeSetupView, type WaitingCard } from "../lib/setupView";
 import { APP_HTTP } from "../mav/link";
@@ -572,22 +572,16 @@ export const HardwareSetup = memo(function HardwareSetup() {
   const t = useT();
   const { face, steps, states } = useSetupFace();
   const frame = face.frame;
-  const [open, setOpen] = useState(OVERVIEW);
+  // The step in the URL (`?step=`). One this frame does not show (hidden, or the other frame's) is the Overview.
+  const open = useNavParam("step") ?? OVERVIEW;
+  const setOpen = (id: string) => navigate({ step: id === OVERVIEW ? null : id });
   const waitingCards = useSyncExternalStore(subscribeSetupView, getWaitingCards, getWaitingCards);
   const waiting = waitingOn(steps, waitingCards);
   const required = steps.filter((item) => !item.optional);
   const done = steps.filter((item, i) => !item.optional && settled(states[i].state)).length;
   const attention = states.filter((st) => st.state === "warn" || st.state === "fail").length;
   const blocking = states.filter((st) => st.state === "fail").length;
-  useEffect(() => {
-    if (open !== OVERVIEW && !steps.some((step) => step.id === open)) setOpen(OVERVIEW);
-  }, [steps, open]);
-  useEffect(() => {
-    const show = () => setOpen(OVERVIEW);
-    window.addEventListener(OPEN_SETUP_OVERVIEW, show);
-    return () => window.removeEventListener(OPEN_SETUP_OVERVIEW, show);
-  }, []);
-  const overview = open === OVERVIEW;
+  const overview = !steps.some((item) => item.id === open);
   const step = steps.find((item) => item.id === open) ?? steps[0];
   // The assistant's view chip follows the page on screen; leaving Setup removes it.
   useEffect(() => {

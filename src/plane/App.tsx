@@ -1,9 +1,9 @@
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { Aside, type LogRow } from "../components/Aside";
 import { MainSplit } from "../components/MainSplit";
 import { AuditLibrary } from "../components/AuditLibrary";
 import { ControllerView } from "../components/ControllerView";
-import { PLANE_WORKSPACES, WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
+import { PLANE_WORKSPACES, useWorkspace, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { MissionView } from "../components/MissionView";
 import { StudioWindowsHost } from "../components/StudioWindows";
 import { planeAxis, planePick, setStudioFocus, useStudioFocus } from "../lib/studioFocus";
@@ -39,7 +39,7 @@ function PlaneWorkspaces({
   // The selected card and axis are the app's, so the studio's panes in windows follow them (lib/studioFocus.ts).
   const { sel, axis, showAll } = useStudioFocus();
   const setShowAll = (on: boolean) => setStudioFocus({ showAll: on });
-  const [workspace, setWorkspace] = useState<WorkspaceId>("loops");
+  const [workspace, setWorkspace] = useWorkspace(PLANE_WORKSPACES);
   const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
   const loopAxis = axis === "d" ? "roll" : axis;
 

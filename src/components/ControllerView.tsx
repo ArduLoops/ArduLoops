@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useState } from "react";
-import { OPEN_SETUP_OVERVIEW } from "../lib/setupNav";
+import { navigate, useNavParam } from "../lib/nav";
 import { useT } from "../i18n/i18n";
 import { usePicked } from "../mav/view";
 import { BoardChats } from "./BoardChats";
@@ -16,6 +16,8 @@ const PHONE_PANES = ["params", "logs", "chats"] as const;
 type Pane = (typeof PANES)[number] | (typeof PHONE_PANES)[number];
 
 const TAB_LABEL: Record<Pane, string> = { calibration: "Setup", logs: "Logs", params: "Params", firmware: "Firmware", chats: "Chats" };
+/** The pane in the URL (`?pane=`). */
+const PANE_URL: Record<Pane, string> = { calibration: "setup", logs: "logs", params: "params", firmware: "firmware", chats: "chats" };
 
 export function ControllerView({
   ids,
@@ -28,24 +30,19 @@ export function ControllerView({
 }) {
   const t = useT();
   const panes: readonly Pane[] = phone ? PHONE_PANES : PANES;
-  const [pane, setPane] = useState<Pane>(panes[0]);
-  const [body, setBody] = useState<Pane>(panes[0]);
+  // A pane this view does not have (a phone pane on the desktop) shows the first one.
+  const urlPane = useNavParam("pane");
+  const pane = panes.find((id) => PANE_URL[id] === urlPane) ?? panes[0];
+  // The tab turns at once; the pane body follows in a transition.
+  const [body, setBody] = useState<Pane>(pane);
+  useEffect(() => {
+    startTransition(() => setBody(pane));
+  }, [pane]);
   const uid = usePicked((s) => (s.ok ? s.boot_uid ?? "" : ""));
   function choose(id: Pane) {
     if (id === pane) return;
-    setPane(id);
-    startTransition(() => setBody(id));
+    navigate({ pane: id === panes[0] ? null : PANE_URL[id] });
   }
-  // The header's Pre-arm tile opens Setup; Setup itself turns to its Overview.
-  useEffect(() => {
-    if (phone) return;
-    const show = () => {
-      setPane("calibration");
-      startTransition(() => setBody("calibration"));
-    };
-    window.addEventListener(OPEN_SETUP_OVERVIEW, show);
-    return () => window.removeEventListener(OPEN_SETUP_OVERVIEW, show);
-  }, [phone]);
   return (
     <section className="scope work">
       {phone ? null : (
