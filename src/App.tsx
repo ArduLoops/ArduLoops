@@ -17,6 +17,7 @@ import { ControllerView } from "./components/ControllerView";
 import { usePhone } from "./lib/phone";
 import { useT } from "./i18n/i18n";
 import { externalPage, openExternal } from "./lib/open";
+import { followDetachedNav, navigate, navHref, openAppLink, useNavParam } from "./lib/nav";
 import { addLog, setLogHandler } from "./log";
 import { send } from "./mav/cmd";
 import { APP_HTTP, formatLink, loadLink, loadLinkHistory, parseLink, rememberLink, saveLink, type LinkKind } from "./mav/link";
@@ -90,39 +91,12 @@ function sameFace(a: ShellFace, b: ShellFace): boolean {
 
 const SHELLS: Shell[] = ["home", "copter", "plane"];
 
-function frameFromUrl(): Shell | null {
-  if (typeof window === "undefined") return null;
-  const f = new URLSearchParams(window.location.search).get("frame");
-  if (f === "copter" || f === "plane") return f;
-  return null;
-}
-
-function boardFromUrl(): string | null {
-  if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get("board") || null;
-}
-
-function writeBoardUrl(board: string | null) {
-  const u = new URL(window.location.href);
-  if (board) u.searchParams.set("board", board);
-  else u.searchParams.delete("board");
-  window.history.replaceState({}, "", u);
+/** `?frame=` picks the screen; without it the screen follows the vehicle on the link (lib/nav.ts). */
+function shellOf(frame: string | null): Shell | null {
+  return frame === "home" || frame === "copter" || frame === "plane" ? frame : null;
 }
 
 const BOARD_WHEN = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
-
-function writeFrameUrl(shell: Shell) {
-  const u = new URL(window.location.href);
-  if (shell === "home") u.searchParams.delete("frame");
-  else u.searchParams.set("frame", shell);
-  window.history.replaceState({}, "", u);
-}
-
-function homeHref(): string {
-  const u = new URL(window.location.href);
-  u.searchParams.delete("frame");
-  return `${u.pathname}${u.search}${u.hash}`;
-}
 
 function isAndroid(): boolean {
   return typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
@@ -264,8 +238,8 @@ export function App() {
   const [labOpen, setLabOpen] = useState(false);
   const [sitlOpen, setSitlOpen] = useState(false);
   const [release, setRelease] = useState<AppRelease | null>(null);
-  const [pick, setPick] = useState<Shell | null>(() => frameFromUrl());
-  const [board, setBoard] = useState<string | null>(() => boardFromUrl());
+  const pick = shellOf(useNavParam("frame"));
+  const board = useNavParam("board");
   const [boards, setBoards] = useState<BoardRow[]>([]);
   const refreshBoards = useCallback(() => {
     void fetchBoards().then(setBoards).catch(() => {});
@@ -294,11 +268,7 @@ export function App() {
     return startStream();
   }, []);
 
-  useEffect(() => {
-    const onPop = () => setPick(frameFromUrl());
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, []);
+  useEffect(() => followDetachedNav(), []);
 
   useEffect(() => {
     const onClick = (ev: MouseEvent) => {
@@ -306,8 +276,15 @@ export function App() {
       const node = ev.target;
       if (!(node instanceof Element)) return;
       const link = node.closest("a");
-      const href = link?.href || "";
-      if (!link || !externalPage(href)) return;
+      if (!link) return;
+      // An app link (arduloops://open?… or ?frame=…) moves this window; it never opens a browser.
+      const raw = link.getAttribute("href") || "";
+      if (raw && openAppLink(raw)) {
+        ev.preventDefault();
+        return;
+      }
+      const href = link.href || "";
+      if (!externalPage(href)) return;
       ev.preventDefault();
       openExternal(href);
     };
@@ -468,14 +445,11 @@ export function App() {
   const liveBoard = phone && !!board && !!face.uid && board === face.uid;
   const away = !!boardOpen || liveBoard;
   function openBoard(key: string | null) {
-    setBoard(key);
-    writeBoardUrl(key);
+    navigate({ board: key });
   }
 
   function onShell(next: Shell) {
-    openBoard(null);
-    setPick(next);
-    writeFrameUrl(next);
+    navigate({ frame: next, board: null });
     addLog(next === "home" ? t("Home") : t(next), "cmd");
   }
 
@@ -513,7 +487,7 @@ export function App() {
           <h1>
             <a
               className="hdr-brand"
-              href={homeHref()}
+              href={navHref({ frame: "home", board: null })}
               aria-current={shell === "home" ? "page" : undefined}
               title={t("Home")}
               onClick={(ev) => {

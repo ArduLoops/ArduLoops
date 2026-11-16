@@ -1,6 +1,6 @@
 import { lazy, memo, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import type { Components } from "react-markdown";
-import Markdown from "react-markdown";
+import Markdown, { defaultUrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -15,6 +15,8 @@ import type { WizardClose } from "../wizards/close";
 import { ChartStrip, chartsFromTools } from "./FindingCharts";
 import { FloatWindow, fitToWindow, useFloatDrag, WindowButtons } from "./FloatWindow";
 import { closeSelf, detachWindow } from "../lib/detach";
+import { APP_SCHEME, appLinkNav, openAppLink } from "../lib/nav";
+import "./AssistantLinks.css";
 import { openOptionsInMain, useAssistantDetached, useAssistantRemote } from "../lib/assistantBridge";
 import { LiveHost, LiveView, liveSpecFromTools, type LiveSpec } from "./LivePlots";
 import { getLang, useT } from "../i18n/i18n";
@@ -2109,8 +2111,28 @@ function ChatPane({
 const REMARK = [remarkGfm, remarkMath];
 const REHYPE = [[rehypeKatex, { strict: "ignore" }]] as const;
 
+/** react-markdown drops unknown schemes; an app link (lib/nav.ts) stays. */
+function chatUrl(url: string): string {
+  return url.toLowerCase().startsWith(APP_SCHEME) ? url : defaultUrlTransform(url);
+}
+
 const CHAT_MD: Components = {
   a({ href, children }) {
+    // An app link opens a place in this app (the main window), not a browser.
+    if (href && appLinkNav(href)) {
+      return (
+        <a
+          href={href}
+          className="ai-applink"
+          onClick={(ev) => {
+            if (ev.button !== 0) return;
+            if (openAppLink(href)) ev.preventDefault();
+          }}
+        >
+          {children}
+        </a>
+      );
+    }
     const ext = !!href && /^https?:/i.test(href);
     const doc = href ? cloudDocFromHref(href, typeof children === "string" ? children : "") : null;
     return (
@@ -2297,7 +2319,7 @@ function shownNotice(body: string, t: (k: string) => string): string {
 const AssistantMarkdown = memo(function AssistantMarkdown({ text }: { text: string }) {
   return (
     <div className="ai-md">
-      <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE as never} skipHtml components={CHAT_MD}>{text}</Markdown>
+      <Markdown remarkPlugins={REMARK} rehypePlugins={REHYPE as never} skipHtml components={CHAT_MD} urlTransform={chatUrl}>{text}</Markdown>
     </div>
   );
 });

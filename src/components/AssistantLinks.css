@@ -1,0 +1,8 @@
+/* A link in the chat that opens a place in this app (lib/nav.ts). */
+.ai-md a.ai-applink {
+  text-decoration: none;
+  border-bottom: 1px dashed currentColor;
+}
+.ai-md a.ai-applink::after {
+  content: " →";
+}

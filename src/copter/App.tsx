@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from "react";
+import { lazy, Suspense, useMemo } from "react";
 import { Aside, type LogRow } from "../components/Aside";
 import { MainSplit } from "../components/MainSplit";
 import { AxisSwitch } from "../components/AxisSwitch";
@@ -14,7 +14,7 @@ import { axisLabel, type Axis } from "../mav/axis";
 import { CopterLoopView } from "./LoopView";
 import { AuditLibrary } from "../components/AuditLibrary";
 import { ControllerView } from "../components/ControllerView";
-import { COPTER_WORKSPACES, WorkspaceTabs, type WorkspaceId } from "../components/WorkspaceTabs";
+import { COPTER_WORKSPACES, useWorkspace, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { MissionView } from "../components/MissionView";
 import { StudioWindowsHost } from "../components/StudioWindows";
 import { copterAxis, copterPick, setStudioFocus, useStudioFocus } from "../lib/studioFocus";
@@ -39,7 +39,7 @@ function CopterWorkspaces({
   // The selected card and axis are the app's, so the studio's panes in windows follow them (lib/studioFocus.ts).
   const { sel, axis, showAll } = useStudioFocus();
   const setShowAll = (on: boolean) => setStudioFocus({ showAll: on });
-  const [workspace, setWorkspace] = useState<WorkspaceId>("loops");
+  const [workspace, setWorkspace] = useWorkspace(COPTER_WORKSPACES);
   const col1Default = useMemo(() => preferredLayoutWidth(LAYERS), []);
 
   function onAxis(next: Axis) {

@@ -53,7 +53,9 @@ export type WindowMsg =
   | { type: "main-ask"; detail: unknown }
   /** The loops studio's selected card and axis (lib/studioFocus.ts). */
   | { type: "studio-focus"; focus: unknown }
-  | { type: "setup-view"; view: unknown };
+  | { type: "setup-view"; view: unknown }
+  /** An app link clicked in a detached window moves the main window (lib/nav.ts). */
+  | { type: "navigate"; nav: unknown };
 
 let channel: BroadcastChannel | null | undefined;
 
