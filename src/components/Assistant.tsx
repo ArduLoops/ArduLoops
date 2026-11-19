@@ -1731,7 +1731,7 @@ function ChatPane({
                 <div className="ai-prompts">
                   {((viewOn || logId) && askStarters.length
                     ? askStarters.map((s) => (typeof s === "string" ? { label: s, text: s } : s))
-                    : (viewOn && setupView && screenStarters(setupView, t)) || starterPrompts(drone.frame)).map((s) => (
+                    : (viewOn && setupView && screenStarters(setupView, drone.ok, t)) || starterPrompts(drone.frame, drone.ok)).map((s) => (
                     <button type="button" key={s.text} title={s.label === s.text ? undefined : t(s.text)} onClick={() => { onDraft(t(s.text)); box.current?.focus(); }}>{t(s.label)}</button>
                   ))}
                 </div>
@@ -3249,7 +3249,7 @@ const STARTER_LABELS = [
 type Starter = { label: string; text: string };
 
 /** One-tap questions for the screen the assistant sees; null where the screen has none of its own. Already translated. */
-function screenStarters(v: SetupView, t: (s: string, vars?: Record<string, string | number>) => string): Starter[] | null {
+function screenStarters(v: SetupView, linked: boolean, t: (s: string, vars?: Record<string, string | number>) => string): Starter[] | null {
   if (v.view === "mission") {
     return [
       { label: t("Check the mission"), text: t("Check this mission for this vehicle: altitude, leg lengths and turns against the navigation settings. What would go wrong, and what should I change?") },
@@ -3262,7 +3262,7 @@ function screenStarters(v: SetupView, t: (s: string, vars?: Record<string, strin
     const file = v.detail && "file" in v.detail ? v.detail.file : "";
     if (!file) {
       return [
-        { label: t("Scripts on the vehicle"), text: t("Which Lua scripts are on the vehicle, and what does each one do?") },
+        ...(linked ? [{ label: t("Scripts on the vehicle"), text: t("Which Lua scripts are on the vehicle, and what does each one do?") }] : []),
         { label: t("Write a script"), text: t("Help me write a Lua script for this vehicle. Ask what it should do first.") },
       ];
     }
@@ -3275,8 +3275,20 @@ function screenStarters(v: SetupView, t: (s: string, vars?: Record<string, strin
   return null;
 }
 
+/**
+ * Starts without a link: nothing can be read from the board, so they use the logs on this computer
+ * (list_logs and the local log tools) and help to connect.
+ */
+const OFFLINE_STARTERS: Starter[] = [
+  { label: "Connect the vehicle", text: "Help me connect my vehicle to ArduLoops: USB, telemetry radio, Wi-Fi or SITL. Ask what I have first." },
+  { label: "Review the newest log", text: "Take the newest log on this computer and review that flight: what it did, every warning, failsafe and error, vibration and power. What should be fixed?" },
+  { label: "Tune from a saved log", text: "Take the newest log on this computer and review the control loops and filters. What should change, and why? I will write the changes when the vehicle is linked." },
+  { label: "WebTools check of a log", text: "Check the newest log on this computer with the WebTools reviews that apply to it. Give each finding with its number and the parameter it points to." },
+];
+
 /** The four starts as a short label and the full message the click sends. */
-function starterPrompts(frame: string | undefined): Starter[] {
+function starterPrompts(frame: string | undefined, linked: boolean): Starter[] {
+  if (!linked) return OFFLINE_STARTERS;
   return starterTexts(frame).map((text, i) => ({ label: STARTER_LABELS[i] ?? text, text }));
 }
 
