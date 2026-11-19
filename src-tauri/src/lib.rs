@@ -110,6 +110,8 @@ mod desktop {
 
     fn show_main(app: &tauri::AppHandle) {
         if let Some(win) = app.get_webview_window("main") {
+            // Mobile windows cannot be minimized and have no unminimize.
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             let _ = win.unminimize();
             let _ = win.show();
             let _ = win.set_focus();
