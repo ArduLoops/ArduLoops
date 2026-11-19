@@ -123,7 +123,15 @@ jobs:
           workspaces: src-tauri
           key: ${{ matrix.target }}
       - run: npm ci
+      # The ArduPilot tag is set in the build script, so its hash changes when the tag changes.
+      - name: Cache macOS SITL
+        id: sitl-cache
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/resources/sitl
+          key: sitl-${{ matrix.target }}-${{ hashFiles('scripts/build-sitl-macos.sh') }}
       - name: Build macOS SITL
+        if: steps.sitl-cache.outputs.cache-hit != 'true'
         run: bash scripts/build-sitl-macos.sh ${{ matrix.target }}
       - uses: tauri-apps/tauri-action@v1
         env:
