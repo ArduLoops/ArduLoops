@@ -26,3 +26,10 @@ Questions, feedback, and suggestions: [open an issue](https://github.com/ArduLoo
 The links line is the same in every release. GitHub links the organisation, not one repository.
 
 The summary is one or two short sentences. Each bullet is one feature. The description uses ASD-STE100: short sentences, one idea each, simple verbs, no marketing, no extra detail.
+
+# Telegram post
+
+`release/telegram/post.md` and `release/telegram/post.jpg` are the post for the Telegram group. The release job sends them after the installers are on the release (`.github/workflows/telegram.yml`). Update both in the same commit as `.release-notes.md`.
+
+- `post.md`: the heading `### Що нового в <version>` (the post stops if the version is not the tag), one short sentence, and 3–6 points `- **<назва>** — <опис>` from the release notes. Plain Ukrainian for pilots. Use the Ukrainian UI labels from `src/i18n/uk.ts`; «борт», not «плата». The download link is added when it is sent.
+- `post.jpg`: made in the video pipeline like a YouTube thumbnail (`node telegram.mjs --ui <capture>` in `demo/`), with real app captures.

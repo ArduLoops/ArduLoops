@@ -151,6 +151,16 @@ jobs:
             gh release delete-asset "$tag" "$name" -R "${{ github.repository }}" -y
           done
 
+  # The release is created with GITHUB_TOKEN, which does not fire `release: published`,
+  # so the post runs here, after the desktop installers are on the release.
+  telegram:
+    needs: [linux, windows, macos, android]
+    if: always() && github.event_name == 'push' && needs.linux.result == 'success' && needs.windows.result == 'success'
+    uses: ./.github/workflows/telegram.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
+
   android:
     needs: github-release
     if: github.event_name != 'workflow_dispatch' || inputs.only == '' || inputs.only == 'android'

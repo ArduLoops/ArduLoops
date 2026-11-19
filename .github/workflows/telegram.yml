@@ -1,0 +1,45 @@
+name: Telegram post
+
+# Sends release/telegram/post.jpg with post.md as the caption to the community Telegram group.
+# release.yml calls it after the desktop installers are on the release. Run it by hand to retry a post.
+# Secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID. Without them the job only prints the caption.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+    secrets:
+      TELEGRAM_BOT_TOKEN:
+        required: false
+      TELEGRAM_CHAT_ID:
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to post (e.g. 2.7.0)
+        required: true
+      dry_run:
+        description: Print the caption only, do not send
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Send
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: node scripts/telegram-release.mjs --tag "${{ inputs.tag }}" ${{ inputs.dry_run && '--dry-run' || '' }}
