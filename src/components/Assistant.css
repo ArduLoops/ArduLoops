@@ -196,7 +196,10 @@
   .ai-pane { position: relative; display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 0; flex: 1; background: var(--bg); }
   .ai-pane.compact, .ai-pane.chats-shut { grid-template-columns: minmax(0, 1fr); }
   .ai-pane.compact { background: transparent; }
-  .ai-chats { min-height: 0; overflow: auto; padding: 12px 10px; border-right: 1px solid var(--btn); background: #14181d; }
+  /* display is set here: the base aside rule turns a narrow-window aside into a two-column grid. */
+  .ai-chats { display: flex; flex-direction: column; min-height: 0; overflow: auto; padding: 12px 10px; border-right: 1px solid var(--btn); background: #14181d; }
+  .ai-chats-empty { margin: 8px 4px; color: var(--dim); font-size: 13px; line-height: 1.4; }
+  .ai-chats .ai-chats-empty button { display: block; width: auto; margin: 6px 0 0; padding: 4px 8px; color: var(--cyan); }
   .ai-chat-bar { position: relative; z-index: 2; display: flex; align-items: center; gap: 4px; margin: 0 0 8px; }
   .ai-chat-bar .ai-new, .ai-chat-bar .ai-filter, .ai-chat-bar .ai-chats-fold {
     width: 28px; height: 28px; margin: 0; padding: 0; flex: none;

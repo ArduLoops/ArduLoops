@@ -1006,6 +1006,31 @@ mod link_wait_tests {
         assert!(setup_view_body(&json!({ "view": { "step": "" } })).is_none());
     }
 
+    #[test]
+    fn mission_and_lua_views_describe_their_screen() {
+        let mission = setup_view_body(&json!({ "view": {
+            "view": "mission", "vehicle": "plane", "step": "mission", "title": "Mission",
+            "detail": { "points": 3, "alt_m": 60, "finish": "rtl", "legs_m": [250, 180, 300, 420], "total_m": 1150,
+                "sharpest_turn_deg": 135, "nav": { "NAVL1_PERIOD": 17, "NAVL1_DAMPING": 0.75, "WP_RADIUS": null, "AIRSPEED_CRUISE": 15, "X": 1 },
+                "mode": "AUTO", "current_wp": 2, "lat": 50.1 },
+        } })).expect("mission view");
+        assert!(!mission.contains("lat") && !mission.contains("\"X\""), "{mission}");
+        let lua = setup_view_body(&json!({ "view": { "view": "lua", "vehicle": "copter", "detail": { "file": "hello.lua", "unsaved": true } } })).expect("lua view");
+        assert!(setup_view_body(&json!({ "view": { "view": "lua", "detail": { "file": "../x.lua" } } })).is_none());
+        let rows = vec![
+            MsgRow { id: 1, role: "user".into(), body: "check it".into() },
+            MsgRow { id: 2, role: "view".into(), body: mission },
+            MsgRow { id: 3, role: "view".into(), body: lua },
+        ];
+        let text = render_context(&plan_context(&rows));
+        assert!(text.contains("plan of 3 waypoint(s) at 60 m above home, ending with RTL"), "{text}");
+        assert!(text.contains("Legs from home, in metres: 250, 180, 300, 420; total 1150 m"), "{text}");
+        assert!(text.contains("Sharpest turn 135°"), "{text}");
+        assert!(text.contains("WP_RADIUS not read"), "{text}");
+        assert!(text.contains("Mode AUTO, target waypoint 2"), "{text}");
+        assert!(text.contains("hello.lua open in the editor. It has unsaved edits"), "{text}");
+    }
+
     fn saved_provider_model(provider: &str) -> Option<String> {
         let path = crate::db::data_dir().join("catalog.sqlite3");
         let connection = Connection::open(path).ok()?;

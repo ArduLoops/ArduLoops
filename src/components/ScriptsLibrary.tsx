@@ -8,6 +8,8 @@ import { Decoration, EditorView, GutterMarker, gutterLineClass, type DecorationS
 import { useT } from "../i18n/i18n";
 import { getLuaQuote, setLuaQuote, subscribeLuaQuote } from "../luaQuote";
 import { addLog } from "../log";
+import { setScreenView } from "../lib/setupView";
+import { useVehicle } from "../mav/view";
 import { APP_HTTP } from "../mav/link";
 import { send, writeParam } from "../mav/cmd";
 import { WorkspaceTabs, type WorkspaceId } from "./WorkspaceTabs";
@@ -144,6 +146,12 @@ export function ScriptsLibrary({
   fileRef.current = { name, saved };
   const viewRef = useRef<EditorView | null>(null);
   const quote = useSyncExternalStore(subscribeLuaQuote, getLuaQuote, getLuaQuote);
+  const vehicle = useVehicle();
+  // The assistant sees which file is open; it reads the source with script_read, or from a quote.
+  useEffect(() => {
+    setScreenView({ view: "lua", vehicle, detail: { file: name, unsaved: dirty } });
+  }, [vehicle, name, dirty]);
+  useEffect(() => () => setScreenView(null), []);
   const extensions = useMemo(() => [
     StreamLanguage.define(lua),
     quoteField,

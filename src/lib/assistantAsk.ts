@@ -7,7 +7,10 @@ import { detachedFromUrl, focusWindow, MAIN_LABEL, postWindowMsg } from "./detac
  */
 export const ASK_ASSISTANT = "arduloops:assistant-ask";
 
-export type AskDetail = { text: string; send: boolean; starters?: string[]; keep?: boolean; log?: string; chat?: string };
+/** A one-tap question: a plain phrase, or a short button label with the longer prompt it puts in the composer. */
+export type Starter = string | { label: string; text: string };
+
+export type AskDetail = { text: string; send: boolean; starters?: Starter[]; keep?: boolean; log?: string; chat?: string };
 
 /** The Ask goes to this window's assistant, or, from a detached window without one, to the main window. */
 function dispatchAsk(detail: AskDetail): void {
@@ -39,7 +42,7 @@ export function takeFocusRequest(): boolean {
 }
 
 /** `log` attaches a stored log to the new chat (an id from /ai/logs, or cloud:{hash}). `draft` is put in the composer, not sent. */
-export function openAssistant(starters: string[] = [], log = "", draft = ""): void {
+export function openAssistant(starters: Starter[] = [], log = "", draft = ""): void {
   focusWanted = true;
   dispatchAsk({ text: draft, send: false, starters, log });
 }

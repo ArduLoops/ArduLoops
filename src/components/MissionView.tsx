@@ -6,6 +6,7 @@ import { noteUi, send, uploadMission, type MissionItem } from "../mav/cmd";
 import { getSnapshot, subscribe } from "../mav/store";
 import type { Sample } from "../mav/types";
 import { usePicked, useVehicle } from "../mav/view";
+import { setScreenView, type MissionDetail } from "../lib/setupView";
 import { WorkspaceTabs, type WorkspaceId } from "./WorkspaceTabs";
 
 const M_PER_DEG = 111_320;
@@ -73,6 +74,34 @@ function fromEnu(east: number, north: number, origin: LatLon): LatLon {
 function dist(a: LatLon, b: LatLon): number {
   const d = toEnu(b.lat, b.lon, a);
   return Math.hypot(d.e, d.n);
+}
+
+/** The plan in numbers for the assistant: legs from home, the sharpest turn, no coordinates. */
+function missionDetail(plan: Plan, origin: LatLon | null, vehicle: string, pose: Pose, params: Record<string, number | undefined>): MissionDetail {
+  const path = origin ? [origin, ...plan.points, ...(plan.finish === "rtl" ? [origin] : [])] : plan.points;
+  const legs = path.slice(1).map((p, i) => Math.round(dist(path[i], p)));
+  let sharpest: number | null = null;
+  for (let i = 1; i < path.length - 1; i++) {
+    const a = toEnu(path[i].lat, path[i].lon, path[i - 1]);
+    const b = toEnu(path[i + 1].lat, path[i + 1].lon, path[i]);
+    if (Math.hypot(a.e, a.n) < 1 || Math.hypot(b.e, b.n) < 1) continue;
+    const turn = Math.abs(wrap180((Math.atan2(b.e, b.n) - Math.atan2(a.e, a.n)) * (180 / Math.PI)));
+    sharpest = Math.max(sharpest ?? 0, Math.round(turn));
+  }
+  const read = (name: string) => (params[name] != null && Number.isFinite(params[name]) ? (params[name] as number) : null);
+  return {
+    points: plan.points.length,
+    alt_m: plan.alt,
+    finish: plan.finish,
+    legs_m: legs.slice(0, 40),
+    total_m: legs.reduce((sum, leg) => sum + leg, 0),
+    sharpest_turn_deg: sharpest,
+    ...(vehicle === "plane"
+      ? { nav: { NAVL1_PERIOD: read("NAVL1_PERIOD"), NAVL1_DAMPING: read("NAVL1_DAMPING"), WP_RADIUS: read("WP_RADIUS"), AIRSPEED_CRUISE: read("AIRSPEED_CRUISE") } }
+      : {}),
+    mode: pose.mode,
+    current_wp: pose.wpSeq,
+  };
 }
 
 const L1_INV_PI = 0.3183099;
@@ -527,6 +556,14 @@ export function MissionView({
   const gps = pair(pose.gpsLat, pose.gpsLon);
   const truth = pair(pose.truthLat, pose.truthLon);
   const home = pair(pose.homeLat, pose.homeLon);
+
+  // The assistant sees this plan while the Mission screen is open.
+  const originKey = origin ? `${origin.lat.toFixed(6)},${origin.lon.toFixed(6)}` : "";
+  useEffect(() => {
+    setScreenView({ view: "mission", vehicle, detail: missionDetail(plan, origin, vehicle, pose, getSnapshot().params) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, originKey, vehicle, pose.mode, pose.wpSeq, tune]);
+  useEffect(() => () => setScreenView(null), []);
 
   useEffect(() => {
     try {

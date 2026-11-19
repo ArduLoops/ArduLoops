@@ -323,6 +323,11 @@ fn quote_for_model(body: &str) -> String {
 /// Only these keys are kept, and each is clipped, so a stored view stays well under 1 KB.
 fn setup_view_body(value: &Value) -> Option<String> {
     let view = value.get("view")?;
+    match view.get("view").and_then(Value::as_str) {
+        Some("mission") => return mission_view_body(view),
+        Some("lua") => return lua_view_body(view),
+        _ => {}
+    }
     let step = view.get("step")?.as_str()?.trim();
     if step.is_empty() || step.len() > 32 {
         return None;
@@ -353,6 +358,99 @@ fn setup_view_body(value: &Value) -> Option<String> {
     }).to_string())
 }
 
+/// The Mission screen: the plan in numbers (no coordinates), the plane's navigation settings, mode and target.
+fn mission_view_body(view: &Value) -> Option<String> {
+    let detail = view.get("detail")?;
+    let num = |key: &str| detail.get(key).and_then(Value::as_f64);
+    let legs: Vec<f64> = detail["legs_m"].as_array().map(|list| list.iter().take(40).filter_map(Value::as_f64).collect()).unwrap_or_default();
+    let finish = match detail["finish"].as_str() { Some("loiter") => "loiter", _ => "rtl" };
+    let nav = detail.get("nav").and_then(Value::as_object).map(|nav| {
+        let keep = ["NAVL1_PERIOD", "NAVL1_DAMPING", "WP_RADIUS", "AIRSPEED_CRUISE"];
+        Value::Object(keep.iter().map(|k| (k.to_string(), nav.get(*k).and_then(Value::as_f64).map_or(Value::Null, |v| json!(v)))).collect())
+    });
+    Some(json!({
+        "view": "mission",
+        "vehicle": clip_chars(view["vehicle"].as_str().unwrap_or("").trim(), 16),
+        "step": "mission",
+        "title": "Mission",
+        "detail": {
+            "points": num("points")?,
+            "alt_m": num("alt_m"),
+            "finish": finish,
+            "legs_m": legs,
+            "total_m": num("total_m"),
+            "sharpest_turn_deg": num("sharpest_turn_deg"),
+            "nav": nav,
+            "mode": clip_chars(detail["mode"].as_str().unwrap_or("").trim(), 24),
+            "current_wp": num("current_wp"),
+        },
+        "draft": [],
+        "warnings": [],
+    }).to_string())
+}
+
+/// The Lua screen: the file open in the editor and whether it has unsaved edits.
+fn lua_view_body(view: &Value) -> Option<String> {
+    let detail = view.get("detail")?;
+    let file = clip_chars(detail["file"].as_str().unwrap_or("").trim(), 64);
+    if file.contains('/') || file.contains('\\') || file.contains("..") {
+        return None;
+    }
+    Some(json!({
+        "view": "lua",
+        "vehicle": clip_chars(view["vehicle"].as_str().unwrap_or("").trim(), 16),
+        "step": "lua",
+        "title": "Lua",
+        "detail": { "file": file, "unsaved": detail["unsaved"].as_bool().unwrap_or(false) },
+        "draft": [],
+        "warnings": [],
+    }).to_string())
+}
+
+fn mission_view_for_model(value: &Value) -> String {
+    let d = &value["detail"];
+    let points = d["points"].as_f64().unwrap_or(0.0) as u64;
+    let mut out = format!("The user is on the Mission screen with a plan of {points} waypoint(s)");
+    if let Some(alt) = d["alt_m"].as_f64() {
+        out.push_str(&format!(" at {} m above home", short_num(alt)));
+    }
+    out.push_str(if d["finish"].as_str() == Some("loiter") { ", ending in a loiter at the last point." } else { ", ending with RTL." });
+    let legs: Vec<String> = d["legs_m"].as_array().map(|l| l.iter().filter_map(Value::as_f64).map(short_num).collect()).unwrap_or_default();
+    if !legs.is_empty() {
+        out.push_str(&format!(" Legs from home, in metres: {}; total {} m.", legs.join(", "), d["total_m"].as_f64().map(short_num).unwrap_or_default()));
+    }
+    if let Some(turn) = d["sharpest_turn_deg"].as_f64() {
+        out.push_str(&format!(" Sharpest turn {}°.", short_num(turn)));
+    }
+    if let Some(nav) = d["nav"].as_object() {
+        let parts: Vec<String> = nav.iter().map(|(k, v)| format!("{k} {}", v.as_f64().map(short_num).unwrap_or_else(|| "not read".into()))).collect();
+        out.push_str(&format!(" Navigation settings: {}.", parts.join(", ")));
+    }
+    if let Some(mode) = d["mode"].as_str().filter(|m| !m.is_empty()) {
+        out.push_str(&format!(" Mode {mode}"));
+        if let Some(wp) = d["current_wp"].as_f64() {
+            out.push_str(&format!(", target waypoint {}", wp as u64));
+        }
+        out.push('.');
+    }
+    out.push_str(" The plan is drawn on screen; it is on the vehicle only after the user uploads it.");
+    out
+}
+
+fn lua_view_for_model(value: &Value) -> String {
+    let d = &value["detail"];
+    let file = d["file"].as_str().unwrap_or("");
+    if file.is_empty() {
+        return "The user is on the Lua screen with no file open. Call script_list for the scripts on the vehicle.".into();
+    }
+    let unsaved = if d["unsaved"].as_bool().unwrap_or(false) {
+        " It has unsaved edits in the editor, so the copy on the vehicle can differ."
+    } else {
+        ""
+    };
+    format!("The user is on the Lua screen with {file} open in the editor.{unsaved} Call script_read for its source unless a Lua selection is attached.")
+}
+
 fn short_num(value: f64) -> String {
     let text = format!("{value:.4}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
@@ -363,6 +461,11 @@ fn view_for_model(body: &str) -> String {
     let Ok(value) = serde_json::from_str::<Value>(body) else {
         return String::new();
     };
+    match value["view"].as_str() {
+        Some("mission") => return mission_view_for_model(&value),
+        Some("lua") => return lua_view_for_model(&value),
+        _ => {}
+    }
     let title = value["title"].as_str().unwrap_or("");
     let step = value["step"].as_str().unwrap_or("overview");
     let mut out = format!("The user is on Controller › Setup › {title}");

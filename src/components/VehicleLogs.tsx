@@ -1,8 +1,7 @@
 import "./VehicleLogs.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useT } from "../i18n/i18n";
-import { openAssistant } from "../lib/assistantAsk";
-import { argsText, askAboutFindings, FindingsWindow, FLAG_LABEL, HOT, spanText, toolLabel, type Finding, type Findings, type Flag } from "./LogFindings";
+import { argsText, askAboutLog, FindingsWindow, FLAG_LABEL, HOT, spanText, toolLabel, type Finding, type Findings, type Flag } from "./LogFindings";
 import { pokeCloud, resumeUploads, uploadLog, useCloudSync, useCloudUploads } from "../lib/cloudSync";
 import { fetchBoardSync, setBoardSync, type BoardSync } from "../lib/boards";
 import { BoardSyncSection } from "./BoardCloud";
@@ -657,12 +656,7 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
   function ask(row: Row) {
     const id = row.file ? row.file.id : row.cloud?.stored ? `cloud:${row.cloud.hash}` : "";
     if (!id) return;
-    openAssistant([t("What happened in this flight?"), t("Is anything in this log worth fixing?")], id);
-  }
-
-  function askFindings(row: Row) {
-    if (!row.file) return ask(row);
-    askAboutFindings(row.file.id, row.file.findings, t);
+    askAboutLog(id, t, row.file?.scan?.flags ?? [], row.file?.findings);
   }
 
   // ---------- rows ----------
@@ -1082,7 +1076,7 @@ export function VehicleLogs({ active, board: opened }: { active: boolean; board?
         <div className="log-menu" style={{ right: `calc(100% - ${menu.x}px)`, top: menu.y + 4 }} onPointerDown={(ev) => ev.stopPropagation()}>
           <button type="button" className="ai" disabled={!menuRow.file && !menuRow.cloud?.stored} onClick={() => { setMenu(null); ask(menuRow); }}>✦ {t("Ask the assistant about this log")}</button>
           {menuRow.file?.findings?.findings.length ? (
-            <button type="button" className="ai" onClick={() => { setMenu(null); askFindings(menuRow); }}>
+            <button type="button" className="ai" onClick={() => { setMenu(null); ask(menuRow); }}>
               <span>✦ {t("Ask the assistant about these findings")}</span><small>{t(menuRow.file.findings.findings.length === 1 ? "{n} finding" : "{n} findings", { n: menuRow.file.findings.findings.length })}</small>
             </button>
           ) : null}

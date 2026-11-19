@@ -33,15 +33,6 @@ export function spanText(seconds: number, t: Tr): string {
   return t("{s} s", { s });
 }
 
-/** The arguments of a tool call as the assistant would write them: file, axis, interval. */
-function callText(tool: string, args: ToolArgs, file: string): string {
-  const parts = [`file=${file}`];
-  if (args.axis) parts.push(`axis=${args.axis}`);
-  if (args.start_us != null) parts.push(`start_us=${args.start_us}`);
-  if (args.end_us != null) parts.push(`end_us=${args.end_us}`);
-  return `${tool}(${parts.join(", ")})`;
-}
-
 /** Axis and interval of a finding: "pitch · 54.0–83.0 s". */
 export function argsText(args: ToolArgs): string {
   const parts: string[] = [];
@@ -50,18 +41,56 @@ export function argsText(args: ToolArgs): string {
   return parts.join(" · ");
 }
 
-/** Opens the assistant with the log attached and a message, not sent, that carries the findings and the calls already made. */
-export function askAboutFindings(id: string, found: Findings | null | undefined, t: Tr): void {
-  if (!found) {
-    openAssistant([t("What happened in this flight?"), t("Is anything in this log worth fixing?")], id);
-    return;
-  }
-  const lines = [t("ArduLoops ran the local log tools on this log. Findings:")];
-  for (const f of found.findings) lines.push(`- ${callText(f.tool, f.args, id)}: ${f.text}`);
-  lines.push("", t("Tool calls already made, with their results attached:"));
-  for (const c of found.calls) lines.push(`- ${callText(c.tool, c.args, id)}${c.ok ? "" : ` — ${c.skipped ? `${t("Not run")}: ` : ""}${c.error ?? t("no result")}`}`);
-  lines.push("", t("What do these findings mean for this vehicle?"));
-  openAssistant([], id, lines.join("\n"));
+type Preset = "review" | "incident" | "tuneQuality" | "tune" | "hardware";
+
+/** The questions offered for a log: a short label and the prompt it puts in the composer. English source phrases. */
+const LOG_PRESETS: Record<Preset, { label: string; text: string }> = {
+  review: {
+    label: "Flight review",
+    text: "What happened in this flight, and what in the log tool results is worth fixing? Start with the most important.",
+  },
+  incident: {
+    label: "Incident",
+    text: "Analyze what happened before and during the event: the timeline, the most likely cause (mechanics, power, failsafe, EKF, control), and what to check on the vehicle before the next flight.",
+  },
+  tuneQuality: {
+    label: "Tune quality",
+    text: "How well is this vehicle tuned? Look at the response on each axis, filters and noise, and vibrations. Does it need a retune, and if so, of what?",
+  },
+  tune: {
+    label: "Tune",
+    text: "From this log, propose parameter changes (notch, filters, PID) as a proposal, with the reason for each change.",
+  },
+  hardware: {
+    label: "Hardware and safety",
+    text: "Check hardware and safety: vibrations, power, motor balance and center of gravity, compass, failsafe settings. What must be fixed before the next flight?",
+  },
+};
+
+const TUNING_TOOLS = new Set(["log_filter_review", "log_pid_review"]);
+const INCIDENT_FLAGS = new Set<FlagKind>(["crash", "fs", "err"]);
+
+/** The presets in the order this log calls for: an incident first after a crash, failsafe or errors; tuning first when tuning rules fired. */
+function presetOrder(flags: Flag[], findings: Finding[]): Preset[] {
+  const incident = flags.some((f) => INCIDENT_FLAGS.has(f.kind));
+  const tuning = findings.some((f) => TUNING_TOOLS.has(f.tool));
+  const hardware = findings.some((f) => !TUNING_TOOLS.has(f.tool)) || flags.some((f) => f.kind === "batt" || f.kind === "clip");
+  const order: Preset[] = [];
+  if (incident) order.push("incident");
+  if (tuning) order.push("tuneQuality", "tune");
+  if (hardware) order.push("hardware");
+  order.push("review", "incident", "tuneQuality", "tune", "hardware");
+  return [...new Set(order)];
+}
+
+/**
+ * Opens the assistant with the log attached and the log presets as one-tap questions; nothing is sent.
+ * The backend puts every tool call, its numbers and the findings in the assistant's context
+ * (log_tool_results) while the log is attached, so the prompts carry the intent, not the data.
+ */
+export function askAboutLog(id: string, t: Tr, flags: Flag[] = [], found?: Findings | null): void {
+  const starters = presetOrder(flags, found?.findings ?? []).map((key) => ({ label: t(LOG_PRESETS[key].label), text: t(LOG_PRESETS[key].text) }));
+  openAssistant(starters, id);
 }
 
 type CallDetail = { tool: string; args: ToolArgs & { file?: string }; result: Record<string, any> };
@@ -189,7 +218,7 @@ export function FindingsWindow({ data, onClose, detached = false }: { data: Find
         ) : error ? <p className="log-dim">{t(error)}</p> : null}
       </div>
       <footer className="log-fd-foot">
-        <button type="button" className="log-act ai" onClick={() => askAboutFindings(data.id, data.findings, t)}>✦ {t("Analyze with the assistant")}</button>
+        <button type="button" className="log-act ai" onClick={() => askAboutLog(data.id, t, data.flags, data.findings)}>✦ {t("Analyze with the assistant")}</button>
       </footer>
     </FloatWindow>
   );

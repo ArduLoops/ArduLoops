@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import type { Starter } from "./assistantAsk";
 
 /**
  * Where the user is in Setup, for the assistant's view chip: the step, the field they asked about,
@@ -6,8 +7,30 @@ import { useEffect } from "react";
  */
 export type ViewDraft = { param: string; from: number | null; to: number };
 
+/** What a Mission screen shows: the plan in numbers, no coordinates. */
+export type MissionDetail = {
+  points: number;
+  alt_m: number;
+  finish: "rtl" | "loiter";
+  legs_m: number[];
+  total_m: number;
+  sharpest_turn_deg: number | null;
+  /** Plane navigation settings as the vehicle reports them; null where not read yet. Absent on a copter. */
+  nav?: { NAVL1_PERIOD: number | null; NAVL1_DAMPING: number | null; WP_RADIUS: number | null; AIRSPEED_CRUISE: number | null };
+  mode: string;
+  current_wp: number | null;
+};
+
+/** What the Lua screen shows: the file open in the editor. */
+export type LuaDetail = { file: string; unsaved: boolean };
+
+/**
+ * The screen the assistant sees. Setup uses step, focus and draft; Mission and Lua carry what they
+ * show in `detail`, and their step is the screen id.
+ */
 export type SetupView = {
-  view: "setup";
+  view: "setup" | "mission" | "lua";
+  detail?: MissionDetail | LuaDetail;
   vehicle: string;
   /** Step id, as setup_status names it; "overview" for the Overview. */
   step: string;
@@ -50,6 +73,22 @@ export function setSetupView(next: Pick<SetupView, "vehicle" | "step" | "title">
   emit();
 }
 
+/** Mission and Lua publish their whole view while on screen; null clears it. */
+export function setScreenView(next: { view: "mission"; vehicle: string; detail: MissionDetail } | { view: "lua"; vehicle: string; detail: LuaDetail } | null): void {
+  if (!next) {
+    if (view && view.view === "setup") return;
+    if (view) {
+      view = null;
+      emit();
+    }
+    return;
+  }
+  const full: SetupView = { view: next.view, vehicle: next.vehicle, step: next.view, title: next.view === "mission" ? "Mission" : "Lua", detail: next.detail, draft: [], warnings: [] };
+  if (JSON.stringify(view) === JSON.stringify(full)) return;
+  view = full;
+  emit();
+}
+
 /** A detached assistant window takes the main window's view as it is (lib/assistantBridge.ts). */
 export function replaceSetupView(next: SetupView | null): void {
   if (JSON.stringify(view) === JSON.stringify(next)) return;
@@ -85,7 +124,7 @@ export function useViewDraft(draft: ViewDraft[]): void {
 // The chat side: the chip can be turned off for one chat (+ → Current view), and Ask leaves one-tap
 // questions built from the step's state. Both reset with a new chat.
 let off = false;
-let starters: string[] = [];
+let starters: Starter[] = [];
 
 export function getViewOff(): boolean {
   return off;
@@ -97,11 +136,11 @@ export function setViewOff(next: boolean): void {
   emit();
 }
 
-export function getAskStarters(): string[] {
+export function getAskStarters(): Starter[] {
   return starters;
 }
 
-export function setAskStarters(next: string[]): void {
+export function setAskStarters(next: Starter[]): void {
   if (!next.length && !starters.length) return;
   starters = next;
   emit();
@@ -128,6 +167,15 @@ export function sentView(): SetupView | null {
 
 /** The chip text: step, focused field, and the draft in short. */
 export function viewLabel(v: SetupView, t: (s: string, vars?: Record<string, string | number>) => string): string {
+  if (v.view === "mission" && v.detail && "points" in v.detail) {
+    const d = v.detail;
+    if (!d.points) return [t("Mission"), t("no waypoints")].join(" · ");
+    return [t("Mission"), d.points === 1 ? t("1 waypoint") : t("{n} waypoints", { n: d.points }), `${Math.round(d.total_m)} m`, `${Math.round(d.alt_m)} m AGL`].join(" · ");
+  }
+  if (v.view === "lua" && v.detail && "file" in v.detail) {
+    if (!v.detail.file) return t("Lua");
+    return [t("Lua"), v.detail.file, ...(v.detail.unsaved ? [t("unsaved")] : [])].join(" · ");
+  }
   const parts = [t("Setup"), t(v.title)];
   if (v.focus) parts.push(v.focus);
   const own = v.focus ? v.draft.find((d) => d.param === v.focus) : undefined;

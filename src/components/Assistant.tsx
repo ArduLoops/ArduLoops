@@ -1599,8 +1599,11 @@ function ChatPane({
     window.addEventListener("pointerdown", close);
     return () => window.removeEventListener("pointerdown", close);
   }, [filterOpen]);
+  // Without a linked board or a saved identity there is no current drone, so its filter would hide every chat.
+  const droneKnown = Boolean(drone.boot_uid?.trim() || drone.board_name?.trim() || drone.frame);
+  const droneOnly = scope === "drone" && droneKnown;
   const shown = chats.filter((chat) => {
-    if (scope === "drone" && !sameDrone(chat.vehicle_key, drone)) return false;
+    if (droneOnly && !sameDrone(chat.vehicle_key, drone)) return false;
     return chat.title.toLowerCase().includes(query.trim().toLowerCase());
   });
   const waiting = proposals.some((p) => p.status === "pending");
@@ -1614,7 +1617,7 @@ function ChatPane({
           <button type="button" className="ai-new" aria-label={t("New chat")} title={t("New chat")} onClick={onNew}><NewChatIcon /></button>
           <input value={query} onChange={(ev) => onQuery(ev.target.value)} placeholder={t("Search chats")} aria-label={t("Search chats")} />
           <div className="ai-filter-wrap">
-            <button type="button" className={scope === "drone" ? "ai-filter on" : "ai-filter"} aria-label={t("Filter chats")} aria-expanded={filterOpen} title={t("Filter chats")} onClick={() => setFilterOpen((open) => !open)}>
+            <button type="button" className={droneOnly ? "ai-filter on" : "ai-filter"} aria-label={t("Filter chats")} aria-expanded={filterOpen} title={t("Filter chats")} onClick={() => setFilterOpen((open) => !open)}>
               <FilterIcon />
             </button>
             {filterOpen ? (
@@ -1657,6 +1660,12 @@ function ChatPane({
             </li>
           ))}
         </ul>
+        {!shown.length && chats.length ? (
+          <p className="ai-chats-empty">
+            {query.trim() ? t("No chats match the search.") : t("No chats for this drone yet.")}
+            {droneOnly ? <button type="button" onClick={() => setScope("all")}>{t("Show all chats")}</button> : null}
+          </p>
+        ) : null}
       </aside>
       )}
       {narrow && chatsOpen ? (
@@ -1716,9 +1725,13 @@ function ChatPane({
                       ? t("The assistant sees {step} and your unwritten changes.", { step: t(setupView.title) })
                       : t("The assistant sees {step}.", { step: t(setupView.title) })}
                   </p>
+                ) : !viewOn && logId && askStarters.length ? (
+                  <p className="ai-view-lead">{t("Pick what to analyze in this log, or ask your own question.")}</p>
                 ) : null}
                 <div className="ai-prompts">
-                  {(viewOn && askStarters.length ? askStarters.map((text) => ({ label: text, text })) : starterPrompts(drone.frame)).map((s) => (
+                  {((viewOn || logId) && askStarters.length
+                    ? askStarters.map((s) => (typeof s === "string" ? { label: s, text: s } : s))
+                    : (viewOn && setupView && screenStarters(setupView, t)) || starterPrompts(drone.frame)).map((s) => (
                     <button type="button" key={s.text} title={s.label === s.text ? undefined : t(s.text)} onClick={() => { onDraft(t(s.text)); box.current?.focus(); }}>{t(s.label)}</button>
                   ))}
                 </div>
@@ -1852,7 +1865,8 @@ function ChatPane({
                   </span>
                 ) : null}
                 {logId ? (
-                  <span className="ai-chip" title={logId}>{pickedLog ? logTitle(pickedLog, t) : logName(logId)}<button type="button" aria-label={t("Remove")} onClick={() => onLog("")}>×</button></span>
+                  <span className="ai-chip" title={`${logId}
+${t("The assistant also gets the results of the local log tools for this log.")}`}>{pickedLog ? logTitle(pickedLog, t) : logName(logId)}<button type="button" aria-label={t("Remove")} onClick={() => onLog("")}>×</button></span>
                 ) : null}
               </div>
             ) : null}
@@ -1860,7 +1874,7 @@ function ChatPane({
               ref={box}
               value={draft}
               onChange={(ev) => onDraft(ev.target.value)}
-              placeholder={waiting || busy ? t("Add a note for the next reply") : viewOn && setupView ? t("Ask about {step}…", { step: setupView.focus ?? t(setupView.title) }) : t("Ask about this vehicle")}
+              placeholder={waiting || busy ? t("Add a note for the next reply") : viewOn && setupView ? (setupView.view === "mission" ? t("Ask about this mission…") : setupView.view === "lua" ? (setupView.detail && "file" in setupView.detail && setupView.detail.file ? t("Ask about this script…") : t("Ask about Lua scripts…")) : t("Ask about {step}…", { step: setupView.focus ?? t(setupView.title) })) : t("Ask about this vehicle")}
               aria-label={t("Message")}
               rows={1}
               onPaste={(ev) => {
@@ -3233,6 +3247,33 @@ const STARTER_LABELS = [
 ];
 
 type Starter = { label: string; text: string };
+
+/** One-tap questions for the screen the assistant sees; null where the screen has none of its own. Already translated. */
+function screenStarters(v: SetupView, t: (s: string, vars?: Record<string, string | number>) => string): Starter[] | null {
+  if (v.view === "mission") {
+    return [
+      { label: t("Check the mission"), text: t("Check this mission for this vehicle: altitude, leg lengths and turns against the navigation settings. What would go wrong, and what should I change?") },
+      { label: t("How will it fly?"), text: t("How will this vehicle fly this mission with the current navigation settings? Where will it cut corners or overshoot, and why?") },
+      { label: t("Tune navigation"), text: t("Look at the navigation settings (L1 period and damping, waypoint radius, cruise speed) for this mission and propose changes as a proposal, with the reason for each.") },
+      { label: t("Failsafes on this mission"), text: t("What happens on this mission if the link or the battery fails? Check the failsafe settings that apply.") },
+    ];
+  }
+  if (v.view === "lua") {
+    const file = v.detail && "file" in v.detail ? v.detail.file : "";
+    if (!file) {
+      return [
+        { label: t("Scripts on the vehicle"), text: t("Which Lua scripts are on the vehicle, and what does each one do?") },
+        { label: t("Write a script"), text: t("Help me write a Lua script for this vehicle. Ask what it should do first.") },
+      ];
+    }
+    return [
+      { label: t("Explain the script"), text: t("Explain what {file} does, how it is configured, and what it changes on the vehicle.", { file }) },
+      { label: t("Is it working?"), text: t("Is {file} running correctly? Check its messages and errors and tell me what is wrong.", { file }) },
+      { label: t("Change the script"), text: t("Help me change {file}. Ask what behavior I want first, then propose the edit.", { file }) },
+    ];
+  }
+  return null;
+}
 
 /** The four starts as a short label and the full message the click sends. */
 function starterPrompts(frame: string | undefined): Starter[] {
