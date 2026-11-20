@@ -25,14 +25,19 @@ const fail = (msg) => {
   process.exit(1);
 };
 
+const printNextCodeOnly = process.argv.includes("--print-next-version-code");
 const aabPath = arg("aab");
-if (!aabPath || !existsSync(aabPath)) fail(`missing or non-existent --aab (${aabPath ?? "none"})`);
+if (!printNextCodeOnly && (!aabPath || !existsSync(aabPath))) {
+  fail(`missing or non-existent --aab (${aabPath ?? "none"})`);
+}
 
 const cargo = readFileSync(join(root, "src-tauri", "Cargo.toml"), "utf8");
 const version = (arg("version") || cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1] || "").replace(/^v/, "");
 if (!version) fail("could not determine app version");
 const [maj, min, pat] = version.split(".").map((n) => parseInt(n, 10) || 0);
-const expectedCode = maj * 1_000_000 + min * 1_000 + pat;
+const semverCode = maj * 1_000_000 + min * 1_000 + pat;
+const explicitCode = parseInt(arg("version-code", ""), 10);
+const expectedCode = Number.isFinite(explicitCode) && explicitCode > 0 ? explicitCode : semverCode;
 
 function plainNotes(mdPath, fallback) {
   if (!existsSync(mdPath)) return fallback;
@@ -57,9 +62,14 @@ function plainNotes(mdPath, fallback) {
 const enNotes = plainNotes(join(root, ".release-notes.md"), `ArduLoops ${version}`);
 const releaseNotes = [{ language: "en-US", text: enNotes }];
 
-console.log(`publish-google-play: ${PACKAGE} ${version} (${expectedCode}), aab=${aabPath}`);
-
 const rawKey = process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON;
+if (printNextCodeOnly && !rawKey) {
+  process.stdout.write(`${semverCode}\n`);
+  process.exit(0);
+}
+if (!printNextCodeOnly) {
+  console.log(`publish-google-play: ${PACKAGE} ${version} (${expectedCode}), aab=${aabPath}`);
+}
 if (process.argv.includes("--dry-run") || !rawKey) {
   console.log(`publish-google-play: dry run${!rawKey ? " (no GOOGLE_PLAY_SERVICE_ACCOUNT_JSON)" : ""}, nothing uploaded`);
   process.exit(0);
@@ -115,8 +125,25 @@ async function api(url, method = "GET", body = undefined, contentType = "applica
 
 // 1. Create an edit session
 const editRes = await api(`${API}/edits`, "POST", {});
-if (!editRes.ok) fail(`create edit failed (${editRes.status}): ${JSON.stringify(editRes.json)}`);
+if (!editRes.ok) {
+  if (printNextCodeOnly) {
+    process.stdout.write(`${semverCode}\n`);
+    process.exit(0);
+  }
+  fail(`create edit failed (${editRes.status}): ${JSON.stringify(editRes.json)}`);
+}
 const editId = editRes.json.id;
+
+if (printNextCodeOnly) {
+  const listRes = await api(`${API}/edits/${editId}/bundles`, "GET");
+  await api(`${API}/edits/${editId}`, "DELETE");
+  const codes = Array.isArray(listRes.json?.bundles)
+    ? listRes.json.bundles.map((b) => parseInt(b.versionCode, 10)).filter((n) => Number.isFinite(n))
+    : [];
+  const nextCode = codes.length ? Math.max(semverCode, Math.max(...codes) + 1) : semverCode;
+  process.stdout.write(`${nextCode}\n`);
+  process.exit(0);
+}
 
 // 2. Upload the .aab bundle (or reuse if versionCode already exists in the library)
 const aabBytes = readFileSync(aabPath);
