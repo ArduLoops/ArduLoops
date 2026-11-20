@@ -1,99 +1,23 @@
 # ArduLoops
 
-Живий стенд, щоб **бачити** контури ArduPilot. Це не Mission Planner, не Autotune і не заміна wiki. Підключіть апарат; HEARTBEAT вибере **copter** або **plane**; далі дивіться, які контури поточний режим справді замикає.
+Наземна станція та ШІ-асистент для коптерів і літаків на ArduPilot — налаштовуйте борт, аналізуйте польотні логи та контури керування.
 
-Хочемо кут. На коптері командуємо rate, який туди веде. На крилі стик у FBWA — кут: серво рухає **FF**, масштабований швидкістю.
+## Швидкий старт
 
-Вставте MAVLink URL у шапку і натисніть **Link**. Або відкрийте **SITL** і **старт**.
+1. **Підключіть або запустіть симулятор** — Виберіть USB, UDP (`14550`) чи TCP у меню **Link**, або натисніть **SITL** у верхній панелі, щоб запустити симулятор коптера чи літака в один клік.
+2. **Налаштування та аналіз логів** — Покрокові майстри для сенсорів, радіо, моторів, польотних режимів і failsafe. Відкрийте будь-який DataFlash `.bin` лог для автоматичної діагностики та графіків.
+3. **Контури керування наживо** — Спостерігайте за контурами Attitude, Rate, PosControl, L1 і TECS у польоті чи симуляції та запитуйте ШІ-асистента про параметри й тюнінг.
 
-## Лінк
-
-| URL | Типове |
-| --- | --- |
-| `tcpout:127.0.0.1:5770` | SITL зі стенда |
-| `tcpout:127.0.0.1:5760` | SITL з `--no-mavproxy` (SERIAL0) |
-| `tcpout:127.0.0.1:5763` | додатковий GCS SITL / перший extra MAVProxy |
-| `tcpout:127.0.0.1:5762` | якщо 5763 уже зайнятий |
-| `udpin:0.0.0.0:14550` | слухати UDP (як GCS). Борт має **надсилати** на цей порт. Інший GCS закрити. |
-| `udpout:127.0.0.1:14550` | UDP-клієнт, коли слухає борт |
-
-Кожен TCP-порт SITL приймає **одного** клієнта. Не направляйте два ArduLoops на той самий порт. WSL SITL `--out 127.0.0.1:14550` лишається в WSL — IP хоста Windows, або `--out udpbcast:0.0.0.0:14550`.
-
-## Запуск SITL
-
-**SITL** перед назвою відкриває ліву рейку. Коптер або крило, **старт**. Windows качає sitl-exe Mission Planner, Linux x86_64 — firmware `arducopter` / `arduplane`, а реліз для macOS запускає SITL, зібраний у застосунок. Усі три роблять Link `tcpout:127.0.0.1:5770`.
-
-Щоб стартувати SITL самим, спочатку зберіть дерево: [налаштування середовища збірки](https://ardupilot.org/dev/docs/building-the-code.html). Якщо ArduLoops єдиний GCS, стартуйте апарат **без** MAVProxy:
-
-### Windows (WSL)
-
-[SITL на Windows через WSL](https://ardupilot.org/dev/docs/sitl-on-windows-wsl.html) після [збірки в WSL](https://ardupilot.org/dev/docs/building-setup-windows10.html).
-
-```bash
-wsl
-cd ~/ardupilot
-python3 Tools/autotest/sim_vehicle.py -v ArduCopter --no-mavproxy
-# or:  -v ArduPlane --no-mavproxy
-```
-
-У ArduLoops **Link** `tcpout:127.0.0.1:5760`. WSL2 зазвичай прокидає цей порт на Windows. Якщо Link не береться — IP з `hostname -I`.
-
-Типовий wiki-запуск (`--map --console`) стартує MAVProxy; тоді ArduLoops часто бере `tcpout:127.0.0.1:5763`.
-
-### macOS / Linux
-
-На **Linux x86_64** **старт** у рейці SITL качає firmware ELF (`SITL_x86_64_linux_gnu`) і Link `tcpout:127.0.0.1:5770`. Реліз для macOS збирає ArduPilot SITL (`Copter-4.7.0`) на GitHub macOS runner і кладе `arducopter` / `arduplane` у застосунок; **старт** запускає цю копію так само. Збірка на Mac без `scripts/build-sitl-macos.sh` не має бінарника для запуску.
-
-Той самий скрипт [SITL](https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html) після збірки на [macOS](https://ardupilot.org/dev/docs/building-setup-mac.html) або [Linux](https://ardupilot.org/dev/docs/building-setup-linux.html):
-
-```bash
-cd ~/ardupilot
-python3 Tools/autotest/sim_vehicle.py -v ArduCopter --no-mavproxy
-# or:  -v ArduPlane --no-mavproxy
-```
-
-**Link** `tcpout:127.0.0.1:5760`.
-
-## Після Link
-
-HEARTBEAT.type монтує оболонку. Порожня рама, поки апарат не заговорить.
+## Робочі простори
 
 ### Copter
 
-![Стенд коптера. Карта зліва, схема вибраного контуру, графіки під нею.](copter-loops.png)
+![Контури керування коптера](copter-loops.png)
 
-Одна сторінка: **карта** зліва, **контур** (вибрана картка як схема) справа зверху, **графіки** справа знизу. Панель можна розгорнути. **Пауза** в шапці заморожує картинку; MAVLink далі йде. Вікно графіка (8–60 с) — в **Опціях**.
-
-- **Карта** — PosControl (зовні) проти Attitude (всередині). Приглушені блоки в цьому режимі не замкнені
-- **Контур** — rate / кут = AC_PID, висота й NE = PosControl P або PID. Кнопки осі (roll / pitch / yaw / height), бо **один** rate-блок обслуговує кожну вісь
-- **Графіки** — Watch будь-якого блоку, який цей режим замикає (rate: `PID_TUNING` desired vs achieved; кут: demand vs `ATTITUDE`)
-
-Rate тюніть у **Stabilize**. Wool / Stock / Sharp — пресети відчуття на стенді, не протокол тюнінгу.
-
-Wiki: [перше налаштування](https://ardupilot.org/copter/docs/initial-setup.html) · [процес тюнінгу](https://ardupilot.org/copter/docs/tuning-process-instructions.html)
+Контури PosControl і Attitude/Rate, тест моторів та покрокове налаштування.
 
 ### Plane
 
-![Стенд літака. L1 і TECS зовні, відкрита схема roll rate.](plane-loops.png)
+![Контури керування літака](plane-loops.png)
 
-Той самий лаяут, що на коптері. Клік по картці — схема й графіки йдуть за нею. Пауза в шапці; вікно графіка — в **Опціях**.
-
-- **Карта** — команда (стик + цілі місії), L1 + TECS зовні (не PosControl), кут і rate крену/тангажа, демпфер рискання (крен AHRS, не RLL_RATE), кермо на землі, далі газ / ніс і елерон / руль висоти / руль напряму. Порожня карта показує живий шлях режиму; картка — лише своє in і out. Roll і pitch — **окремі картки**
-- **Контур** — rate = AC_PID + FF, L1 = трек → крен, TECS = енергія → тангаж + газ, yaw = демпфер, steer = смуга. Клік по блоку TECS на розгорнутій схемі — додаткові ліміти
-- **Графіки** — Watch будь-якого блоку, який цей режим замикає (rate: `PID_TUNING`; кут: `nav_roll` / `nav_pitch` vs `ATTITUDE`)
-
-Внутрішні контури тюніть у **FBWA**, не в MANUAL. Числа pitch незалежні від roll.
-
-Wiki: [перше налаштування](https://ardupilot.org/plane/docs/first-time-setup.html) · [швидкий старт тюнінгу](https://ardupilot.org/plane/docs/tuning-quickstart.html) · [крен/тангаж/рискання](https://ardupilot.org/plane/docs/new-roll-and-pitch-tuning.html) · [TECS](https://ardupilot.org/plane/docs/tecs-total-energy-control-system-for-speed-height-tuning-guide.html) · [навігація L1](https://ardupilot.org/plane/docs/navigation-tuning.html) · [кермо на землі](https://ardupilot.org/plane/docs/tuning-ground-steering-for-a-plane.html)
-
-## Асистент і контролер
-
-**Асистент** праворуч читає цей лінк, параметри і DataFlash-лог після завантаження. Цифра у відповіді — вимір, який повернув лог. Налаштування, логи, параметри і прошивка — робочий простір **контролера**. **Аудит** показує, що було записано.
-
-## Межі
-
-Стенд показує контури першого налаштування / перших польотів, наживо по MAVLink (`ATTITUDE`, `PID_TUNING`, `VFR_HUD`, відстежувані параметри). Завантажений лог додає помилку слідування, утримання і спектр цього файла.
-
-**У стенді.** Copter `ATC_*` / `PSC_*`. Plane `RLL_*` / `PTCH_*` / `YAW2SRV_*` / `NAVL1_*` / `TECS_*` / `STEER2SRV_*`.
-
-**Поза стендом.** QuadPlane, flare автопосадки, повний harmonic-notch, Autotune як процедура. Якщо wiki і стенд розходяться — wiki.
+Навігація L1, енергетичний контур TECS, контури крену/тангажа та налаштування серво.
