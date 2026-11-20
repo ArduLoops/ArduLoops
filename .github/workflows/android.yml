@@ -39,6 +39,11 @@ jobs:
       - name: Android project
         run: |
           npm run tauri -- android init --ci
+          rm -f src-tauri/gen/android/app/src/main/res/drawable/ic_launcher_background.xml \
+                src-tauri/gen/android/app/src/main/res/drawable-v24/ic_launcher_foreground.xml
+          cp -r src-tauri/icons/android/* src-tauri/gen/android/app/src/main/res/
+          cmp -s src-tauri/icons/android/mipmap-xxxhdpi/ic_launcher.png src-tauri/gen/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          cmp -s src-tauri/icons/android/mipmap-xxxhdpi/ic_launcher_foreground.png src-tauri/gen/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
           # Release builds default to no cleartext. The UI talks to the on-device backend at http://127.0.0.1:8767.
           gradle=src-tauri/gen/android/app/build.gradle.kts
           grep -q 'usesCleartextTraffic"\] = "false"' "$gradle"
@@ -48,12 +53,15 @@ jobs:
       - name: Version
         # The version lives in Cargo.toml only. Desktop builds read it from there; the Android build does
         # not, and without it the APK is versionName 1.0 / versionCode 1, which cannot update an installed app.
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
+          code=$(node scripts/publish-google-play.mjs --print-next-version-code --version "$version")
           echo "APP_VERSION=$version" >> "$GITHUB_ENV"
-          echo "APP_VERSION_CODE=$(echo "$version" | awk -F. '{ print $1 * 1000000 + $2 * 1000 + $3 }')" >> "$GITHUB_ENV"
+          echo "APP_VERSION_CODE=$code" >> "$GITHUB_ENV"
       - name: Build APK and AAB
-        run: npm run tauri -- android build --apk --aab --target aarch64 --ci --config "{\"version\":\"$APP_VERSION\"}"
+        run: npm run tauri -- android build --apk --aab --target aarch64 --ci --config "{\"version\":\"$APP_VERSION\",\"bundle\":{\"android\":{\"versionCode\":$APP_VERSION_CODE}}}"
       - name: Sign APK and AAB
         run: |
           mkdir -p dist-apk
@@ -98,4 +106,4 @@ jobs:
         if: inputs.tag != '' || github.event_name == 'workflow_dispatch'
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-        run: node scripts/publish-google-play.mjs --aab "dist-apk/ArduLoops_${APP_VERSION}_aarch64.aab" --version "$APP_VERSION"
+        run: node scripts/publish-google-play.mjs --aab "dist-apk/ArduLoops_${APP_VERSION}_aarch64.aab" --version "$APP_VERSION" --version-code "$APP_VERSION_CODE"
