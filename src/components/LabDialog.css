@@ -51,7 +51,7 @@
   .own-key-note { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--dim); line-height: 1.35; }
   .ai-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .ai-heading { display: inline-flex; align-items: baseline; gap: 8px; min-width: 0; }
-  .ai-heading b { display: inline; }
+  .ai-heading b { display: inline; color: var(--ink); }
   .ai-heading .cabinet-link { margin: 0; }
   .ai-title .google-signin {
     display: inline-flex; align-items: center; gap: 6px;

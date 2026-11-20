@@ -130,6 +130,24 @@ function loadSitlPrefs(): SitlPrefs {
   }
 }
 
+/** Event the app listens for to show the SITL link in Link, as the rail's own Start does. */
+export const SITL_LINK_EVENT = "arduloops:sitl-link";
+
+/** Start SITL with the saved rail settings for this frame, from outside the rail (the home page). */
+export function startSitl(vehicle: "copter" | "plane"): void {
+  const prefs = { ...loadSitlPrefs(), vehicle };
+  saveSitlPrefs(prefs);
+  window.dispatchEvent(new CustomEvent(SITL_LINK_EVENT, { detail: SITL_LINK }));
+  send({
+    op: "sitl_start",
+    vehicle: prefs.vehicle,
+    wipe: prefs.wipe,
+    home: prefs.home,
+    speedup: prefs.speedup,
+    engine: prefs.engine,
+  });
+}
+
 function saveSitlPrefs(p: SitlPrefs): void {
   try {
     localStorage.setItem(SITL_PREF, JSON.stringify(p));

@@ -255,38 +255,6 @@ export function LabDialog({
               <option value="en">English</option>
             </select>
           </li>
-          <li className="opt">
-            <div className="opt-body">
-              <b>{t("Plot window")}</b>
-              <span>{t("How far back the traces go. The stand keeps up to a minute so a longer window already has history.")}</span>
-            </div>
-            <select
-              aria-label={t("Plot window")}
-              value={span}
-              onChange={(ev) => {
-                const n = Number(ev.target.value) as PlotSpan;
-                setSpan(n);
-                setPlotSpan(n);
-              }}
-            >
-              {PLOT_SPANS.map((n) => (
-                <option key={n} value={n}>
-                  {t("{n} s", { n })}
-                </option>
-              ))}
-            </select>
-          </li>
-          {linked ? (
-            <li className="opt">
-              <div className="opt-body">
-                <b>{t("Export")}</b>
-                <span>{t("Write live parameters to a .parm file.")}</span>
-              </div>
-              <button type="button" onClick={onSave} title={t("Export current parameters as a .parm file")}>
-                {t("Export")}
-              </button>
-            </li>
-          ) : null}
           <li className="opt ai-row">
             <div className="opt-body">
               <div className="ai-title">
@@ -445,6 +413,38 @@ export function LabDialog({
               )}
             </div>
           </li>
+          <li className="opt">
+            <div className="opt-body">
+              <b>{t("Plot window")}</b>
+              <span>{t("How far back the traces go. The stand keeps up to a minute so a longer window already has history.")}</span>
+            </div>
+            <select
+              aria-label={t("Plot window")}
+              value={span}
+              onChange={(ev) => {
+                const n = Number(ev.target.value) as PlotSpan;
+                setSpan(n);
+                setPlotSpan(n);
+              }}
+            >
+              {PLOT_SPANS.map((n) => (
+                <option key={n} value={n}>
+                  {t("{n} s", { n })}
+                </option>
+              ))}
+            </select>
+          </li>
+          {linked ? (
+            <li className="opt">
+              <div className="opt-body">
+                <b>{t("Export")}</b>
+                <span>{t("Write live parameters to a .parm file.")}</span>
+              </div>
+              <button type="button" onClick={onSave} title={t("Export current parameters as a .parm file")}>
+                {t("Export")}
+              </button>
+            </li>
+          ) : null}
           <li className="opt ai-row">
             <div className="opt-body">
               <b>{t("Telemetry log")}</b>

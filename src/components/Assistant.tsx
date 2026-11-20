@@ -1084,7 +1084,7 @@ export function Assistant({
     <LiveHost chatId={chatId}>
       {wizardAsk ? <WizardHost ask={wizardAsk} onDone={(id, report) => void onWizardDone(id, report)} /> : null}
       {docOpen ? <DocWindow doc={docOpen} onClose={() => setDocOpen(null)} /> : null}
-      {home && !configured ? <Disconnected /> : null}
+      {home && !configured ? <Disconnected onOpenOptions={onOpenOptions} /> : null}
       {home && configured ? (
         <main className="agent-home">
           <ChatPane
@@ -3596,7 +3596,7 @@ function Mesh({ visible }: { visible: boolean }) {
   );
 }
 
-function Orb() {
+export function Orb() {
   return (
     <div className="ai-orb" aria-hidden="true">
       <span className="ai-mote" />

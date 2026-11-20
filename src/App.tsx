@@ -11,7 +11,7 @@ import { LogAutoDownload } from "./components/VehicleLogs";
 import { LinkChip } from "./components/LinkChip";
 import { LabDialog, type AppRelease } from "./components/LabDialog";
 import { StudioRecorder } from "./components/StudioRecorder";
-import { SimRail } from "./components/SimRail";
+import { SimRail, SITL_LINK_EVENT } from "./components/SimRail";
 import { CopterApp } from "./copter/App";
 import { ControllerView } from "./components/ControllerView";
 import { usePhone } from "./lib/phone";
@@ -252,6 +252,19 @@ export function App() {
   useEffect(() => {
     refreshBoards();
   }, [refreshBoards, face.uid]);
+  // The home page starts SITL outside the rail; show its link in Link the same way.
+  useEffect(() => {
+    const on = (ev: Event) => {
+      const url = (ev as CustomEvent<string>).detail;
+      if (typeof url !== "string") return;
+      const parsed = parseLink(url);
+      setLinkKind(parsed.kind);
+      setLinkValue(parsed.value);
+      saveLink(url);
+    };
+    window.addEventListener(SITL_LINK_EVENT, on);
+    return () => window.removeEventListener(SITL_LINK_EVENT, on);
+  }, []);
   const refreshSerialPorts = useRef<() => void>(() => {});
   const paused = isPaused();
   const lastLive = useRef<Shell | null>(null);
@@ -526,19 +539,6 @@ export function App() {
             />
           </h1>
         </div>
-        <p className="sub">
-          {boardOpen
-            ? t("A board from the database: its note, saved parameters, logs and chats. Nothing here writes to a vehicle.")
-            : shell === "home"
-            ? t("Link a vehicle. HEARTBEAT picks copter or plane. The wiki is the protocol — this stand shows the loops.")
-            : !shellAlive
-              ? plane
-                ? t("No plane on this link. Grey until HEARTBEAT says plane.")
-                : t("No copter on this link. Grey until HEARTBEAT says copter.")
-              : plane
-                ? t("We want an angle. The stick does not move the servo — FF does, scaled by airspeed.")
-                : t("We want an angle. We don't command the angle — we command the rate that takes us there.")}
-        </p>
         <div className="hdr-right">
           <LinkChip
             linked={linked}
