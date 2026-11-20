@@ -52,9 +52,9 @@ jobs:
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)
           echo "APP_VERSION=$version" >> "$GITHUB_ENV"
           echo "APP_VERSION_CODE=$(echo "$version" | awk -F. '{ print $1 * 1000000 + $2 * 1000 + $3 }')" >> "$GITHUB_ENV"
-      - name: APK
-        run: npm run tauri -- android build --apk --target aarch64 --ci --config "{\"version\":\"$APP_VERSION\"}"
-      - name: Sign APK
+      - name: Build APK and AAB
+        run: npm run tauri -- android build --apk --aab --target aarch64 --ci --config "{\"version\":\"$APP_VERSION\"}"
+      - name: Sign APK and AAB
         run: |
           mkdir -p dist-apk
           unsigned=$(find src-tauri/gen/android -name '*.apk' -print -quit)
@@ -72,13 +72,25 @@ jobs:
           badging=$("$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$out" | head -1)
           echo "$badging"
           echo "$badging" | grep -q "versionCode='$APP_VERSION_CODE' versionName='$APP_VERSION'" || { echo "APK version is not $APP_VERSION ($APP_VERSION_CODE)"; exit 1; }
+          unsigned_aab=$(find src-tauri/gen/android -name '*.aab' -print -quit)
+          out_aab="dist-apk/ArduLoops_${APP_VERSION}_aarch64.aab"
+          cp "$unsigned_aab" "$out_aab"
+          jarsigner -sigalg SHA256withRSA -digestalg SHA-256 \
+            -keystore src-tauri/arduloops-sideload.p12 \
+            -storetype PKCS12 \
+            -storepass arduloops \
+            -keypass arduloops \
+            "$out_aab" arduloops
+          jarsigner -verify -verbose "$out_aab" >/dev/null
           ls -l dist-apk
       - uses: actions/upload-artifact@v4
         with:
           name: android-apk
-          path: dist-apk/*.apk
+          path: |
+            dist-apk/*.apk
+            dist-apk/*.aab
       - name: Upload to release
         if: inputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ inputs.tag }}" dist-apk/*.apk --clobber
+        run: gh release upload "${{ inputs.tag }}" dist-apk/*.apk dist-apk/*.aab --clobber
