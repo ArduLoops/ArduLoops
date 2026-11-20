@@ -967,7 +967,6 @@ export const uk: Record<string, string> = {
   "Download the newest log from the board, review the control loops and filters, and make the changes that give the best result. Then get the vehicle and me ready for the next test flight: what to fly and what to watch. When the tune is done, say so and suggest ending the tuning phase.": "Скачай з борту найновіший лог, розбери контури керування й фільтри і внеси зміни, які дадуть найкращий результат. Потім підготуй апарат і мене до наступного тестового польоту: що летіти і на що дивитися. Коли налаштування завершено, скажи про це і запропонуй закінчити фазу налаштування.",
   "Download the newest log from the board and check this vehicle with the WebTools reviews that apply to it. Skip a review this vehicle or the log cannot support and say why. Give each finding with its number and the parameter it points to, and fix what needs fixing.": "Скачай з борту найновіший лог і перевір цей апарат оглядами WebTools, які до нього застосовні. Пропусти огляд, який цей апарат або лог не підтримує, і скажи чому. Дай кожну знахідку з її числом і параметром, на який вона вказує, і виправ те, що потребує виправлення.",
   "Download the newest log from the board and review that flight: what it did, every warning, failsafe, and error, vibration and power, and what changed since the previous log. Fix what needs fixing.": "Скачай з борту найновіший лог і розбери цей політ: що робив апарат, кожне попередження, failsafe і помилку, вібрації й живлення, і що змінилося від попереднього лога. Виправ те, що потребує виправлення.",
-  "A board from the database: its note, saved parameters, logs and chats. Nothing here writes to a vehicle.": "Плата з бази: її нотатка, збережені параметри, логи й чати. Звідси нічого не пишеться на борт.",
   "This board is not in the database.": "Цієї плати немає в базі.",
   "Not on the link": "Не на зв'язку",
   "Last on the link": "Востаннє на зв'язку",
@@ -1234,6 +1233,7 @@ export const uk: Record<string, string> = {
   Simulation: "симуляція",
   Reset: "скинути",
   Wipe: "wipe",
+  "WebAssembly SITL from ArduPilot master. Off: the native SITL build.": "SITL у WebAssembly з ArduPilot master. Вимкнено: нативна збірка SITL.",
   home: "дім",
   "SITL stopped": "SITL зупинено",
   "Downloading {file}": "завантаження {file}",
@@ -1341,8 +1341,6 @@ export const uk: Record<string, string> = {
   "Stand · wrote {n} of {total}": "стандарт · записано {n} з {total}",
   "Axis · {axis}": "вісь · {axis}",
 
-  "We want an angle. We don't command the angle — we command the rate that takes us there.":
-    "Хочемо кут. Керуємо не кутом, а швидкістю, якою туди крутимось.",
   "The wing layers view is still a stub. RLL_ / PTCH_ / L1 / TECS will appear later.":
     "Шари крила ще заглушка. RLL_ / PTCH_ / L1 / TECS з’являться пізніше.",
   "Link is up, but attitude is not arriving (ATT 0 Hz). The plot stays flat until ATTITUDE arrives.":
@@ -2054,8 +2052,6 @@ export const uk: Record<string, string> = {
   "Tune pitch rate first. If height oscillates after that, raise TECS_TIME_CONST, not a fake height P.":
     "Спочатку pitch rate. Якщо висота потім осцилює — піднімайте TECS_TIME_CONST, не вигаданий P висоти.",
   "V {v} m/s   gs {gs} m/s   W {w}": "V {v} м/с   gs {gs} м/с   W {w}",
-  "We want an angle. The stick does not move the servo — FF does, scaled by airspeed.":
-    "Хочемо кут. Стік не рухає серво — це робить FF, масштабований швидкістю.",
   YAW2SRV_DAMP: "YAW2SRV_DAMP",
   "Yaw damper": "демпфер рискання",
   "Yaw damper on the rudder. Not copter yaw P. YAW_RATE is ACRO-only.":
@@ -2190,8 +2186,6 @@ export const uk: Record<string, string> = {
   coordinate: "координація",
   course: "курс",
   track: "трек",
-  "Link a vehicle. HEARTBEAT picks copter or plane. The wiki is the protocol — this stand shows the loops.":
-    "Підключіть апарат. HEARTBEAT вибере copter або plane. Wiki — протокол, стенд показує контури.",
   AHRS: "AHRS",
   Nose: "ніс",
   Camera: "камера",
@@ -3652,4 +3646,19 @@ export const uk: Record<string, string> = {
   "Syncing…": "Синхронізація…",
   "What leaves this device: the board's hardware id, board type, name and note, vehicle profile, when it was last linked, and its saved parameters. Logs sync on their own; assistant chats stay on the device they were made on. Only you can read it, and nothing from the account is ever written to a vehicle.": "Що залишає цей пристрій: апаратний ідентифікатор плати, тип плати, назва й нотатка, профіль апарата, час останнього під’єднання та збережені параметри. Логи синхронізуються окремо; чати з асистентом лишаються на пристрої, де їх створили. Прочитати це можете лише ви, і з облікового запису нічого не записується в апарат.",
   "{n} of {limit} boards in your account": "{n} з {limit} плат у вашому обліковому записі",
+  // Start page (Disconnected.tsx).
+  "Copter": "Коптер",
+  "Ground station and AI assistant for ArduPilot copters and planes.": "Наземна станція та ШІ-асистент для коптерів і літаків на ArduPilot.",
+  "Start copter SITL": "Запустити SITL коптера",
+  "Start plane SITL": "Запустити SITL літака",
+  "ArduPilot on {port}": "ArduPilot на {port}",
+  "Connections": "Підключення",
+  "Plane": "Літак",
+  "Set up Assistant": "Налаштувати асистента",
+  "Community": "Спільнота",
+  "No flags": "Без прапорів",
+  "Recent activity": "Нещодавнє",
+  "Recent boards": "Останні борти",
+  "Recent chats": "Останні чати",
+  "Recent connections": "Останні підключення",
 };

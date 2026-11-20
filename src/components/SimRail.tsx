@@ -105,11 +105,15 @@ export function SimRail({
 const SITL_PREF = "arduloops.sitl";
 const DEFAULT_HOME = "-35.363261,149.165230,584,353";
 
+type SitlEngine = "native" | "wasm";
+
 type SitlPrefs = {
   vehicle: "copter" | "plane";
   wipe: boolean;
   home: string;
   speedup: number;
+  /** Unset: the app's default build (first of `sitl_engines`). */
+  engine?: SitlEngine;
 };
 
 function loadSitlPrefs(): SitlPrefs {
@@ -119,10 +123,29 @@ function loadSitlPrefs(): SitlPrefs {
     const wipe = !!raw.wipe;
     const home = typeof raw.home === "string" && raw.home.trim() ? raw.home.trim() : DEFAULT_HOME;
     const speedup = Math.min(10, Math.max(1, Math.round(Number(raw.speedup) || 1)));
-    return { vehicle, wipe, home, speedup };
+    const engine: SitlEngine | undefined = raw.engine === "wasm" || raw.engine === "native" ? raw.engine : undefined;
+    return { vehicle, wipe, home, speedup, engine };
   } catch {
     return { vehicle: "copter", wipe: false, home: DEFAULT_HOME, speedup: 1 };
   }
+}
+
+/** Event the app listens for to show the SITL link in Link, as the rail's own Start does. */
+export const SITL_LINK_EVENT = "arduloops:sitl-link";
+
+/** Start SITL with the saved rail settings for this frame, from outside the rail (the home page). */
+export function startSitl(vehicle: "copter" | "plane"): void {
+  const prefs = { ...loadSitlPrefs(), vehicle };
+  saveSitlPrefs(prefs);
+  window.dispatchEvent(new CustomEvent(SITL_LINK_EVENT, { detail: SITL_LINK }));
+  send({
+    op: "sitl_start",
+    vehicle: prefs.vehicle,
+    wipe: prefs.wipe,
+    home: prefs.home,
+    speedup: prefs.speedup,
+    engine: prefs.engine,
+  });
 }
 
 function saveSitlPrefs(p: SitlPrefs): void {
@@ -222,7 +245,8 @@ function sitlLine(sample: Sample, t: (key: string, vars?: Record<string, string 
   if (phase === "run") {
     const hb = sample.frame === "plane" || sample.frame === "copter" ? sample.frame : "";
     if (sample.ok && hb === vehicle) {
-      return t("Running {vehicle} · tcp 5770", { vehicle: t(vehicle) }) + load;
+      const wasm = sample.sitl_engine === "wasm" ? " · WASM" : "";
+      return t("Running {vehicle} · tcp 5770", { vehicle: t(vehicle) }) + wasm + load;
     }
     return t("Waiting for HEARTBEAT on 5770") + load;
   }
@@ -244,6 +268,10 @@ function SitlLaunch({
   const phase = sample.sitl_phase || "idle";
   const running = !!sample.sitl_running;
   const busy = phase === "download" || phase === "start";
+  const engines = (sample.sitl_engines || []).filter((e): e is SitlEngine => e === "native" || e === "wasm");
+  const canPick = engines.includes("native") && engines.includes("wasm");
+  const engine: SitlEngine | undefined =
+    prefs.engine && engines.includes(prefs.engine) ? prefs.engine : engines[0];
 
   function setPref(next: Partial<SitlPrefs>) {
     setPrefs((p) => {
@@ -261,8 +289,9 @@ function SitlLaunch({
       wipe: prefs.wipe,
       home: prefs.home,
       speedup: prefs.speedup,
+      engine,
     });
-    addLog(t("Start") + " · " + t(prefs.vehicle), "cmd");
+    addLog(t("Start") + " · " + t(prefs.vehicle) + (engine === "wasm" ? " · WASM" : ""), "cmd");
   }
 
   function onStop() {
@@ -392,16 +421,31 @@ function SitlLaunch({
           ) : null}
         </ul>
       ) : null}
-      <button
-        type="button"
-        className={`map-sw sim-tog${prefs.wipe ? " on hot" : ""}`}
-        aria-pressed={prefs.wipe}
-        disabled={busy || running}
-        onClick={() => setPref({ wipe: !prefs.wipe })}
-      >
-        <span className="track" aria-hidden="true" />
-        {t("Wipe")}
-      </button>
+      <div className="sim-togs">
+        <button
+          type="button"
+          className={`map-sw sim-tog${prefs.wipe ? " on hot" : ""}`}
+          aria-pressed={prefs.wipe}
+          disabled={busy || running}
+          onClick={() => setPref({ wipe: !prefs.wipe })}
+        >
+          <span className="track" aria-hidden="true" />
+          {t("Wipe")}
+        </button>
+        {canPick ? (
+          <button
+            type="button"
+            className={`map-sw sim-tog${engine === "wasm" ? " on" : ""}`}
+            aria-pressed={engine === "wasm"}
+            disabled={busy || running}
+            title={t("WebAssembly SITL from ArduPilot master. Off: the native SITL build.")}
+            onClick={() => setPref({ engine: engine === "wasm" ? "native" : "wasm" })}
+          >
+            <span className="track" aria-hidden="true" />
+            WASM
+          </button>
+        ) : null}
+      </div>
     </div>
     <details className="sim-sec more" open>
       <summary>

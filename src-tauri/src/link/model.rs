@@ -309,6 +309,12 @@ pub struct Sample {
     /// Outbound IPv4 of this computer, so another GCS can open TCP 5760.
     #[serde(default)]
     pub sitl_lan: String,
+    /// "native" or "wasm" for the SITL this app started.
+    #[serde(default)]
+    pub sitl_engine: String,
+    /// SITL builds this app can start, the default first.
+    #[serde(default)]
+    pub sitl_engines: Vec<String>,
     pub logs: Vec<OnboardLog>,
     pub log_list_expected: Option<u16>,
     pub log_list_at: f64,
@@ -415,6 +421,8 @@ impl Sample {
             sitl_cpu: 0.0,
             sitl_rss_mb: 0.0,
             sitl_lan: String::new(),
+            sitl_engine: String::new(),
+            sitl_engines: Vec::new(),
             logs: Vec::new(),
             log_list_expected: None,
             log_list_at: 0.0,
@@ -554,6 +562,9 @@ pub enum Cmd {
         wipe: bool,
         home: String,
         speedup: f64,
+        /// "native", "wasm", or empty for the platform default.
+        #[serde(default)]
+        engine: String,
     },
     #[serde(rename = "sitl_stop")]
     SitlStop,

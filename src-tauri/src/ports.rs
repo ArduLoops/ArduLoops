@@ -5,6 +5,26 @@ pub struct Port {
     pub name: String,
     /// Device Manager name, for example `COM4 — USB-SERIAL CH340`.
     pub label: String,
+    /// USB ids of an ArduPilot board (ArduPilot, CubePilot, Holybro, 3DR), or "ArduPilot" in the product name.
+    pub ardupilot: bool,
+}
+
+/// USB vendor ids that ArduPilot ChibiOS builds and common flight controllers enumerate with.
+#[cfg(not(target_os = "android"))]
+const ARDUPILOT_VIDS: [u16; 4] = [0x1209, 0x2DAE, 0x3162, 0x26AC];
+
+#[cfg(not(target_os = "android"))]
+fn is_ardupilot(p: &serialport::SerialPortInfo) -> bool {
+    match &p.port_type {
+        serialport::SerialPortType::UsbPort(info) => {
+            ARDUPILOT_VIDS.contains(&info.vid)
+                || [&info.product, &info.manufacturer]
+                    .into_iter()
+                    .flatten()
+                    .any(|s| s.to_ascii_lowercase().contains("ardupilot"))
+        }
+        _ => false,
+    }
 }
 
 #[cfg(not(target_os = "android"))]
@@ -20,6 +40,7 @@ pub fn list() -> Vec<Port> {
                 .cloned()
                 .unwrap_or_else(|| friendly(&p));
             Port {
+                ardupilot: is_ardupilot(&p),
                 name: p.port_name,
                 label,
             }

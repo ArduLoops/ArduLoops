@@ -21,6 +21,16 @@ export const PINNED_UPSTREAMS = {
     localPath: 'src-tauri/src/dflog/',
     description: 'DataFlash binary formats, SITL models, parameter definitions',
   },
+  sitl_wasm: {
+    name: 'ArduPilot WASM SITL',
+    repo: 'ArduPilot/ardupilot',
+    branch: 'master',
+    commit: '9d7be65cd63ae0ee722b002ccc606f0e8d97cd74',
+    shortCommit: '9d7be65cd6',
+    date: '2026-11-19',
+    localPath: 'public/sitl/',
+    description: 'arducopter and arduplane built with --board wasm (scripts/build-sitl-wasm.sh)',
+  },
   webtools: {
     name: 'ArduPilot WebTools',
     repo: 'ArduPilot/WebTools',

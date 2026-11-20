@@ -351,6 +351,7 @@ fn drain_cmds(
                 wipe,
                 home,
                 speedup,
+                engine,
             }) => {
                 sitl.start(
                     SitlOpts {
@@ -358,6 +359,7 @@ fn drain_cmds(
                         wipe,
                         home,
                         speedup,
+                        engine,
                     },
                     Arc::clone(latest),
                 );

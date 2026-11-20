@@ -3,6 +3,8 @@
 //! (`resources/sitl`). Spawn `--serial0 tcp:5770` for this app, `--serial1 tcp:5760`
 //! for another ground station, and `--serial2 udpclient:127.0.0.1:14550`.
 //! A broadcast target drops the GCS reply, so Mission Planner never gets MISSION_COUNT.
+//! On Linux (or with `ARDULOOPS_SITL=wasm`) the WebAssembly build runs instead, in a hidden
+//! window, on the same ports (`crate::sitl_wasm`).
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -53,6 +55,8 @@ pub struct SitlOpts {
     pub wipe: bool,
     pub home: String,
     pub speedup: f64,
+    /// "native", "wasm", or empty for the platform default (`sitl_wasm::engines`).
+    pub engine: String,
 }
 
 struct Inner {
@@ -69,6 +73,9 @@ struct Inner {
     lan: String,
     cpu_mark: Option<(Instant, u64)>,
     stats_pid: Option<u32>,
+    wasm: Option<crate::sitl_wasm::WasmRun>,
+    /// "native" or "wasm" while a run is set up or running.
+    engine: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -98,6 +105,8 @@ impl SitlCtl {
                 lan: String::new(),
                 cpu_mark: None,
                 stats_pid: None,
+                wasm: None,
+                engine: String::new(),
             }),
         })
     }
@@ -111,6 +120,8 @@ impl SitlCtl {
             s.sitl_cpu = g.cpu_pct;
             s.sitl_rss_mb = g.rss_mb;
             s.sitl_lan = g.lan.clone();
+            s.sitl_engine = g.engine.clone();
+            s.sitl_engines = crate::sitl_wasm::engines();
         }
     }
 
@@ -141,6 +152,7 @@ impl SitlCtl {
             g.child = None;
             g.pid = Some(pid);
             g.vehicle = vehicle;
+            g.engine = "native".into();
             g.phase = "run".into();
             g.detail = String::new();
             g.running = true;
@@ -167,6 +179,10 @@ impl SitlCtl {
         g.gen = g.gen.wrapping_add(1);
         let pid = g.pid.take();
         kill_child(g.child.take());
+        if let Some(run) = g.wasm.take() {
+            run.stop();
+            crate::sitl_wasm::close_window();
+        }
         if let Some(pid) = pid {
             #[cfg(windows)]
             win_proc::kill_tree(pid);
@@ -192,6 +208,7 @@ impl SitlCtl {
                 Err(_) => return,
             };
             g.vehicle = norm_vehicle(&opts.vehicle).into();
+            g.engine = if crate::sitl_wasm::wanted(&opts.engine) { "wasm" } else { "native" }.into();
             g.phase = "download".into();
             g.detail = String::new();
             g.running = false;
@@ -207,6 +224,18 @@ impl SitlCtl {
                 }
             }
         });
+    }
+
+    /// Stop this run's WASM SITL (ports and window), if it is still the current run.
+    fn stop_wasm(&self, gen: u64) {
+        let run = match self.inner.lock() {
+            Ok(mut g) if g.gen == gen => g.wasm.take(),
+            _ => None,
+        };
+        if let Some(run) = run {
+            run.stop();
+            crate::sitl_wasm::close_window();
+        }
     }
 
     fn alive(&self, gen: u64) -> bool {
@@ -287,6 +316,9 @@ fn run_job(
 ) -> Result<(), String> {
     let vehicle = norm_vehicle(&opts.vehicle);
     let model = if vehicle == "plane" { "plane" } else { "+" };
+    if crate::sitl_wasm::wanted(&opts.engine) {
+        return run_wasm_job(ctl, gen, &opts, vehicle, model, latest);
+    }
     let root = sitl_root()?;
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;
     let run_dir = root.join(vehicle);
@@ -356,6 +388,93 @@ fn run_job(
     ctl.push_latest(latest);
     watch_pid(ctl, gen, latest);
     Ok(())
+}
+
+/// WebAssembly SITL in a hidden window. Its parameters are kept in `eeprom-wasm.bin` next to the native run.
+fn run_wasm_job(
+    ctl: &Arc<SitlCtl>,
+    gen: u64,
+    opts: &SitlOpts,
+    vehicle: &str,
+    model: &str,
+    latest: &Mutex<Sample>,
+) -> Result<(), String> {
+    use crate::sitl_wasm::{Launch, WasmRun};
+    ctl.set(gen, "start", "", false, None);
+    ctl.push_latest(latest);
+    let home = sanitize_home(&opts.home);
+    let speedup = opts.speedup.clamp(1.0, 10.0);
+    let binary = if vehicle == "plane" { "arduplane" } else { "arducopter" };
+    let eeprom = sitl_root()?.join(vehicle).join("eeprom-wasm.bin");
+    if opts.wipe {
+        let _ = fs::remove_file(&eeprom);
+    }
+    let run = WasmRun::start(Launch {
+        binary,
+        args: vec![format!("-M{model}"), format!("-O{home}"), format!("-s{speedup}")],
+        eeprom,
+    })?;
+    let url = run.url.clone();
+    {
+        let mut g = ctl.inner.lock().map_err(|_| "sitl lock")?;
+        if g.gen != gen {
+            run.stop();
+            return Ok(());
+        }
+        g.wasm = Some(run);
+    }
+    if let Err(err) = crate::sitl_wasm::open_window(&url) {
+        ctl.stop_wasm(gen);
+        return Err(err);
+    }
+    if !wait_wasm(ctl, gen)? {
+        return Ok(());
+    }
+    ctl.set(gen, "run", "", true, Some(LINK));
+    ctl.push_latest(latest);
+    loop {
+        std::thread::sleep(Duration::from_millis(400));
+        if !ctl.alive(gen) {
+            return Ok(());
+        }
+        let ended = ctl.inner.lock().ok().and_then(|g| g.wasm.as_ref().map(|r| r.ended())).unwrap_or(true);
+        if ended {
+            if let Ok(mut g) = ctl.inner.lock() {
+                if g.gen == gen {
+                    g.wasm = None;
+                }
+            }
+            crate::sitl_wasm::close_window();
+            ctl.on_exit(gen);
+            ctl.push_latest(latest);
+            return Ok(());
+        }
+    }
+}
+
+/// Wait for the firmware's first bytes. False when this run was stopped meanwhile.
+fn wait_wasm(ctl: &SitlCtl, gen: u64) -> Result<bool, String> {
+    let t0 = Instant::now();
+    loop {
+        if !ctl.alive(gen) {
+            return Ok(false);
+        }
+        let status = ctl.inner.lock().ok().and_then(|g| g.wasm.as_ref().map(|r| r.status()));
+        match status {
+            Some(Ok(true)) => return Ok(true),
+            Some(Err(err)) => {
+                ctl.stop_wasm(gen);
+                return Err(err);
+            }
+            Some(Ok(false)) if t0.elapsed() > crate::sitl_wasm::START_TIMEOUT => {
+                ctl.stop_wasm(gen);
+                return Err("WASM SITL did not start in the WebView".into());
+            }
+            Some(Ok(false)) => {}
+            None => return Ok(false),
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn fetch_sitl(
