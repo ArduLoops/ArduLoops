@@ -1174,7 +1174,7 @@ const PID_REVIEW_NOTE: &str = concat!(
     "phase_margin_deg, gain_margin_db, and sensitivity_peak_db are of the open loop L = T/(1-T). ",
     "That holds when the pair is Tar and Act of the PID message and the feed-forward gains are zero; margins_unavailable names the condition that failed. ",
     "A null field was not measured. It is not zero. ",
-    "proposed_params is empty when no measured number supports a change. ",
+    "current_params are the gains recorded in the log for this loop; proposed_params is empty when no measured number supports a change, which means this tool found no defect in current_params. ",
     "logging is the log's own logging setup: firmware is the firmware that wrote it, and sample_hz the rate the source message was written at. ",
     "attitude_fast, attitude_med, pid, and attitude_fullrate read LOG_BITMASK with the bit numbers of ArduPilot 4.x: bits 0, 1, and 12 on ArduCopter, bits 0, 1, and 20 on ArduPlane. For another firmware the bit list at docs.LOG_BITMASK is the reference, and bits_set is the raw value. ",
     "In the ArduPilot 4.x source (docs.rates), ArduCopter writes RATE and PIDR, PIDP, PIDY at the main loop rate with bit 0, and at 10 Hz with only bit 1; the PID messages also need bit 12. ArduPlane writes its rate loops at the main loop rate with bit 20, at 25 Hz with bit 0, and at 10 Hz with bit 1. ",

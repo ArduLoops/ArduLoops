@@ -495,7 +495,7 @@ fn result_digest(tool: &str, res: &Value) -> Value {
 pub fn findings_context(id: &str) -> Option<String> {
     let body = findings_detail(id, true)?;
     Some(format!(
-        "ArduLoops ran the local log tools on this file when it was stored. calls lists each call with its arguments and the numbers it returned; the chart and curve samples are left out. The same call with the same arguments returns the full cached result. A call with skipped true was not made, and error says why. log_magfit ran with its defaults: compass 1, fit_type iron, motor_comp none. findings lists the rules those results fired, in the tools' own words and numbers; an empty list means none fired. notes has each tool's own reading of its fields.\n{body}"
+        "ArduLoops ran the local log tools on this file when it was stored. calls lists each call with its arguments and the numbers it returned; the chart and curve samples are left out. Calls without start_us and end_us cover the whole file and do not isolate a single phase or brief event such as takeoff or landing; inspect that interval with log_inspect and log_query or log_compute when the question is about a specific moment. The same call with the same arguments returns the full cached result. A call with skipped true was not made, and error says why. log_magfit ran with its defaults: compass 1, fit_type iron, motor_comp none. findings lists the rules those results fired, in the tools' own words and numbers; an empty list means none fired. current_params in a result are the logged settings that tool read; when proposed_params is empty, that tool found no defect in those parameters. notes has each tool's own reading of its fields.\n{body}"
     ))
 }
 
