@@ -13,3 +13,4 @@ target-codex-release/
 .claude/
 .env
 .env.*
+release/google-play/
