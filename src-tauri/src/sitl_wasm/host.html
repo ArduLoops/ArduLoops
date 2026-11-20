@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ArduLoops SITL</title>
+<style>body{font:13px system-ui,sans-serif;margin:16px;background:#111;color:#ddd}</style>
+</head>
+<body>
+<p id="state">Starting ArduPilot SITL…</p>
+<script>
+// The worker runs the firmware and talks to the app over a WebSocket (src-tauri/src/sitl_wasm).
+// Closing this window stops the simulator.
+const worker = new Worker('worker.js' + location.search, { type: 'module' });
+const state = document.getElementById('state');
+worker.onmessage = (event) => { state.textContent = event.data; };
+worker.onerror = (event) => { state.textContent = 'SITL stopped: ' + (event.message || 'worker error'); };
+</script>
+</body>
+</html>

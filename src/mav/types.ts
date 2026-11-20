@@ -140,6 +140,10 @@ export type Sample = {
   sitl_cpu?: number;
   sitl_rss_mb?: number;
   sitl_lan?: string;
+  /** "native" or "wasm" for the SITL this app started. */
+  sitl_engine?: string;
+  /** SITL builds this app can start, the default first. */
+  sitl_engines?: string[];
 };
 
 export const EMPTY: Sample = {
@@ -209,7 +213,14 @@ export type Cmd =
   | { op: "param_read"; name: string }
   | { op: "params_list" }
   | { op: "reboot" }
-  | { op: "sitl_start"; vehicle: "copter" | "plane"; wipe: boolean; home: string; speedup: number }
+  | {
+      op: "sitl_start";
+      vehicle: "copter" | "plane";
+      wipe: boolean;
+      home: string;
+      speedup: number;
+      engine?: "native" | "wasm";
+    }
   | { op: "sitl_stop" };
 
 /** `param`: a parameter ArduPilot reads at boot changed (`name`). `log_list`: the block logger cannot find where a log ends. `vehicle`: the board asked for a reboot (`text`). */

@@ -1,0 +1,4 @@
+arducopter and arduplane SITL, built as WebAssembly with Emscripten 6.0.8
+from https://github.com/ArduPilot/ardupilot/tree/9d7be65cd63ae0ee722b002ccc606f0e8d97cd74 (board wasm).
+ArduPilot is licensed under the GPLv3 in COPYING.txt.
+Rebuild with scripts/build-sitl-wasm.sh.

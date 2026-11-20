@@ -19,6 +19,7 @@ mod research;
 #[cfg(not(target_os = "android"))]
 mod serial_link;
 mod sitl;
+mod sitl_wasm;
 mod tlog;
 mod udp;
 mod update;
@@ -144,6 +145,13 @@ mod desktop {
     }
 
     pub fn run() {
+        // WebKitGTK hides SharedArrayBuffer even on cross-origin isolated pages unless JavaScriptCore
+        // is told to allow it. WASM SITL (crate::sitl_wasm) needs it for its threads. The web process
+        // inherits this, so set it before the first WebView, while there is only this thread.
+        #[cfg(target_os = "linux")]
+        if std::env::var_os("JSC_useSharedArrayBuffer").is_none() {
+            std::env::set_var("JSC_useSharedArrayBuffer", "1");
+        }
         let (tx, rx) = mpsc::channel::<Cmd>();
         let builder = tauri::Builder::default();
         // First plugin: a second launch focuses this window, and its deep link reaches `on_open_url` here.

@@ -158,6 +158,8 @@ function shouldReload(filename) {
   const n = filename.replaceAll("\\", "/");
   if (n.includes("/target/") || n.startsWith("target/") || n.includes("/gen/")) return false;
   if (n.includes("/migrations/") && n.endsWith(".sql")) return true;
+  // The WASM SITL page is compiled into the bridge with include_str!.
+  if (/(^|\/)sitl_wasm\/[^/]+\.(html|js)$/.test(n)) return true;
   if (!/\.(rs|toml)$/.test(n)) return false;
   // tests.rs is included under cfg(test). The running bridge does not contain it.
   if (/(^|\/)tests\.rs$/.test(n) || /_tests\.rs$/.test(n) || /(^|\/)(tests|benches)\//.test(n)) return false;

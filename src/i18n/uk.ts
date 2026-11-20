@@ -1234,6 +1234,7 @@ export const uk: Record<string, string> = {
   Simulation: "симуляція",
   Reset: "скинути",
   Wipe: "wipe",
+  "WebAssembly SITL from ArduPilot master. Off: the native SITL build.": "SITL у WebAssembly з ArduPilot master. Вимкнено: нативна збірка SITL.",
   home: "дім",
   "SITL stopped": "SITL зупинено",
   "Downloading {file}": "завантаження {file}",
