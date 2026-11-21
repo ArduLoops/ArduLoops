@@ -114,6 +114,27 @@ mod tests {
         assert!((rows[0][1].as_f64().unwrap() - 0.25).abs() < 1e-6);
     }
 
+    #[test]
+    fn fmt_bytes_inside_a_payload_do_not_redefine_a_type() {
+        let mut buf = Vec::new();
+        push_fmt(&mut buf, 129, "RATE", "Qf", "TimeUS,P");
+        push_fmt(&mut buf, 14, "TXT", "ZZ", "A,B");
+        let mut fake = Vec::new();
+        push_fmt(&mut fake, 129, "BAD", "Qff", "TimeUS,X,Y");
+        fake.resize(128, 0);
+        buf.extend_from_slice(&[HEAD1, HEAD2, 14]);
+        buf.extend_from_slice(&fake);
+        buf.extend_from_slice(&[HEAD1, HEAD2, 129]);
+        buf.extend_from_slice(&1_000_000u64.to_le_bytes());
+        buf.extend_from_slice(&0.25f32.to_le_bytes());
+        let formats = parse_formats(&buf);
+        assert_eq!(formats[&129].name, "RATE");
+        let mut rates = 0;
+        let mut incomplete = false;
+        walk(&buf, &formats, |fmt, _, _| rates += (fmt.name == "RATE") as usize, &mut incomplete);
+        assert_eq!(rates, 1);
+    }
+
     fn push_qz(buf: &mut Vec<u8>, type_id: u8, time: u64, text: &str) {
         buf.extend_from_slice(&[HEAD1, HEAD2, type_id]);
         buf.extend_from_slice(&time.to_le_bytes());

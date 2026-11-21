@@ -42,6 +42,7 @@ sha2 = "0.10"
 tar = "0.4"
 uuid = { version = "1.11", features = ["v4"] }
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+flightlog-core = { version = "0.1.2", default-features = false }
 # Model HTTPS uses rustls with ring. OpenSSL and aws-lc do not cross-compile into the Android app.
 # Android cannot use the platform certificate verifier: that crate panics unless a Kotlin
 # component is initialized, and the dropped connection shows up in the WebView as "Failed to fetch".

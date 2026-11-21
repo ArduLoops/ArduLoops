@@ -5,44 +5,33 @@ fn read_id(id: &str) -> Result<Vec<u8>, String> {
     fs::read(resolve(id)?).map_err(|e| e.to_string())
 }
 
+/// FMT records as flightlog-core reads them: only at message boundaries, in log order,
+/// so header bytes inside another message's payload never redefine a type.
 fn parse_formats(bytes: &[u8]) -> BTreeMap<u8, Fmt> {
+    let opts = flightlog_core::ReadOptions { types: Some(["FMT".to_string()].into()), scale: false, keep_order: false };
+    let log = flightlog_core::dataflash::read(bytes, &opts);
     let mut formats = BTreeMap::new();
-    let mut i = 0;
-    while i + 3 < bytes.len() {
-        if bytes[i] != HEAD1 || bytes[i + 1] != HEAD2 {
-            i += 1;
-            continue;
-        }
-        if bytes[i + 2] != FMT_TYPE {
-            i += 1;
-            continue;
-        }
-        if let Some(fmt) = decode_fmt(&bytes[i..]) {
-            let key = fmt_type_byte(&bytes[i..]);
-            formats.insert(key, fmt);
-            i += 89;
-        } else {
-            i += 1;
+    let Some(table) = log.table("FMT") else { return formats };
+    let col = |name: &str| table.column(name).map(|c| &c.data);
+    let (Some(kind), Some(length), Some(name), Some(format), Some(labels)) =
+        (col("Type"), col("Length"), col("Name"), col("Format"), col("Columns"))
+    else {
+        return formats;
+    };
+    for row in 0..table.rows {
+        let (Some(key), Some(length)) = (kind.get_i64(row), length.get_i64(row)) else { continue };
+        let text = |c: &flightlog_core::ColumnData| c.get_str(row).unwrap_or_default().trim().to_string();
+        if let Some(fmt) = decode_fmt(length as usize, text(name), text(format), &text(labels)) {
+            formats.insert(key as u8, fmt);
         }
     }
     formats
 }
 
-fn fmt_type_byte(bytes: &[u8]) -> u8 {
-    bytes.get(3).copied().unwrap_or(0)
-}
-
-fn decode_fmt(bytes: &[u8]) -> Option<Fmt> {
-    if bytes.len() < 89 || bytes[0] != HEAD1 || bytes[1] != HEAD2 || bytes[2] != FMT_TYPE {
-        return None;
-    }
-    let length = bytes[4] as usize;
+fn decode_fmt(length: usize, name: String, format: String, labels: &str) -> Option<Fmt> {
     if length < 3 || length > 255 {
         return None;
     }
-    let name = cstr(&bytes[5..9]);
-    let format = cstr(&bytes[9..25]);
-    let labels = cstr(&bytes[25..89]);
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return None;
     }
