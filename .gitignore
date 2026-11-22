@@ -14,3 +14,8 @@ target-codex-release/
 .env
 .env.*
 release/google-play/
+
+# Signing keys belong in repository secrets, never in git
+*.p12
+*.jks
+*.keystore
