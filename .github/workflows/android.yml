@@ -63,32 +63,52 @@ jobs:
       - name: Build APK and AAB
         run: npm run tauri -- android build --apk --aab --target aarch64 --ci --config "{\"version\":\"$APP_VERSION\",\"bundle\":{\"android\":{\"versionCode\":$APP_VERSION_CODE}}}"
       - name: Sign APK and AAB
+        # Keys live in repository secrets, never in the repo. The APK is signed with key rotation:
+        # Android 9+ checks the new key (v3 + lineage); Android 7-8 can only check the original key (v2),
+        # so the old key still signs that block. The old key was leaked; the lineage denies it rollback,
+        # so once a device has the rotated APK, builds signed only with the old key cannot update it.
+        # The AAB for Google Play is signed with the new key, which is the registered upload key.
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_OLD_KEYSTORE_B64: ${{ secrets.ANDROID_OLD_KEYSTORE_B64 }}
+          ANDROID_OLD_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_OLD_KEYSTORE_PASSWORD }}
         run: |
+          bt="$ANDROID_HOME/build-tools/35.0.0"
+          new_ks="$RUNNER_TEMP/arduloops-release.p12"
+          old_ks="$RUNNER_TEMP/arduloops-old.p12"
+          trap 'rm -f "$new_ks" "$old_ks"' EXIT
+          printf %s "$ANDROID_KEYSTORE_B64" | base64 -d > "$new_ks"
+          printf %s "$ANDROID_OLD_KEYSTORE_B64" | base64 -d > "$old_ks"
           mkdir -p dist-apk
           unsigned=$(find src-tauri/gen/android -name '*.apk' -print -quit)
           aligned="$RUNNER_TEMP/arduloops-aligned.apk"
-          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f -p 4 "$unsigned" "$aligned"
+          "$bt/zipalign" -f -p 4 "$unsigned" "$aligned"
           out="dist-apk/ArduLoops_${APP_VERSION}_aarch64.apk"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign \
-            --ks src-tauri/arduloops-sideload.p12 \
-            --ks-pass pass:arduloops \
-            --key-pass pass:arduloops \
+          "$bt/apksigner" sign \
+            --ks "$old_ks" --ks-pass env:ANDROID_OLD_KEYSTORE_PASSWORD --key-pass env:ANDROID_OLD_KEYSTORE_PASSWORD \
+            --next-signer \
+            --ks "$new_ks" --ks-pass env:ANDROID_KEYSTORE_PASSWORD --key-pass env:ANDROID_KEYSTORE_PASSWORD \
+            --lineage src-tauri/android-signing.lineage \
+            --rotation-min-sdk-version 28 \
             --out "$out" \
             "$aligned"
-          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose "$out"
+          "$bt/apksigner" verify --verbose "$out"
+          new_cert=09825e2c87aa57923cd59b63f6c659afc21c224ee3d6cba0f646c8571e19a038
+          "$bt/apksigner" verify --print-certs --min-sdk-version 28 "$out" | grep -q "SHA-256 digest: $new_cert" || { echo "APK is not signed with the new key for Android 9+"; exit 1; }
           # An APK whose versionCode is not this release's cannot update the installed app.
-          badging=$("$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$out" | head -1)
+          badging=$("$bt/aapt2" dump badging "$out" | head -1)
           echo "$badging"
           echo "$badging" | grep -q "versionCode='$APP_VERSION_CODE' versionName='$APP_VERSION'" || { echo "APK version is not $APP_VERSION ($APP_VERSION_CODE)"; exit 1; }
           unsigned_aab=$(find src-tauri/gen/android -name '*.aab' -print -quit)
           out_aab="dist-apk/ArduLoops_${APP_VERSION}_aarch64.aab"
           cp "$unsigned_aab" "$out_aab"
           jarsigner -sigalg SHA256withRSA -digestalg SHA-256 \
-            -keystore src-tauri/arduloops-sideload.p12 \
+            -keystore "$new_ks" \
             -storetype PKCS12 \
-            -storepass arduloops \
-            -keypass arduloops \
-            "$out_aab" arduloops
+            -storepass:env ANDROID_KEYSTORE_PASSWORD \
+            -keypass:env ANDROID_KEYSTORE_PASSWORD \
+            "$out_aab" arduloops-release
           jarsigner -verify -verbose "$out_aab" >/dev/null
           ls -l dist-apk
       - uses: actions/upload-artifact@v4
