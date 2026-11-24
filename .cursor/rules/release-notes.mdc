@@ -31,5 +31,6 @@ The summary is one or two short sentences. Each bullet is one feature. The descr
 
 `release/telegram/post.md` and `release/telegram/post.jpg` are the post for the Telegram group. The release job sends them after the installers are on the release (`.github/workflows/telegram.yml`). Update both in the same commit as `.release-notes.md`.
 
-- `post.md`: the heading `### Що нового в <version>` (the post stops if the version is not the tag), one short sentence, and 3–6 points `- **<назва>** — <опис>` from the release notes. Plain Ukrainian for pilots. Use the Ukrainian UI labels from `src/i18n/uk.ts`; «борт», not «плата». The download link is added when it is sent.
+- `post.md`: the heading `### Що нового в <version>` (the post stops if the version is not the tag), one short sentence, and 3–6 points `- **<назва>** — <опис>` from the release notes. Plain Ukrainian for pilots.
+- Keep only what a pilot gains: what they can now do or see. Leave out internal fixes, signing, build, bridge, protocol and parser details, and technical terms that the UI does not show (owner, 2026-11-24). Such changes stay in `.release-notes.md`. Use the Ukrainian UI labels from `src/i18n/uk.ts`; «борт», not «плата». The download link is added when it is sent.
 - `post.jpg`: made in the video pipeline like a YouTube thumbnail (`node telegram.mjs --ui <capture>` in `demo/`), with real app captures.
