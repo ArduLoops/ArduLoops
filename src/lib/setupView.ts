@@ -10,6 +10,8 @@ export type ViewDraft = { param: string; from: number | null; to: number };
 /** What a Mission screen shows: the plan in numbers, no coordinates. */
 export type MissionDetail = {
   points: number;
+  /** Actions and conditions attached to the points. */
+  actions?: number;
   alt_m: number;
   finish: "rtl" | "loiter";
   legs_m: number[];

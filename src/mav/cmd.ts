@@ -40,11 +40,45 @@ export async function writeParam(name: string, value: number): Promise<string | 
 }
 
 export type MissionItem = {
-  kind: "waypoint" | "takeoff" | "rtl" | "loiter";
+  kind:
+    | "waypoint"
+    | "takeoff"
+    | "rtl"
+    | "loiter"
+    | "loiter_time"
+    | "loiter_turns"
+    | "land"
+    | "speed"
+    | "servo"
+    | "relay"
+    | "cam_dist"
+    | "jump"
+    | "roi"
+    | "land_start"
+    | "delay"
+    | "distance"
+    | "yaw";
   lat: number;
   lon: number;
   alt: number;
+  /** param1..param4; the bridge's mission_shape says what each kind uses. */
+  p1?: number;
+  p2?: number;
+  p3?: number;
+  p4?: number;
 };
+
+/** The mission on the vehicle, or the reason it could not be read. */
+export async function readMission(): Promise<{ items: import("../lib/missionPlan").BoardItem[] } | { error: string }> {
+  try {
+    const response = await fetch(`${APP_HTTP}/mission`, { cache: "no-store" });
+    const body = (await response.json().catch(() => ({}))) as { ok?: boolean; message?: string; items?: unknown };
+    if (response.ok && body.ok && Array.isArray(body.items)) return { items: body.items as import("../lib/missionPlan").BoardItem[] };
+    return { error: body.message || `HTTP ${response.status}` };
+  } catch {
+    return { error: "No link" };
+  }
+}
 
 /** Null means the vehicle accepted the mission. A string is the refusal. */
 export async function uploadMission(items: MissionItem[]): Promise<string | null> {

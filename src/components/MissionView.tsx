@@ -1,20 +1,35 @@
 import "./MissionView.css";
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactElement } from "react";
 import { useT } from "../i18n/i18n";
 import { addLog } from "../log";
-import { noteUi, send, uploadMission, type MissionItem } from "../mav/cmd";
+import { noteUi, readMission, send, uploadMission } from "../mav/cmd";
 import { getSnapshot, subscribe } from "../mav/store";
 import type { Sample } from "../mav/types";
 import { usePicked, useVehicle } from "../mav/view";
 import { setScreenView, type MissionDetail } from "../lib/setupView";
 import { WorkspaceTabs, type WorkspaceId } from "./WorkspaceTabs";
+import { MissionEditor, actBadge, actText, type ActState } from "./MissionEditor";
+import {
+  ACTS,
+  MAX_POINTS,
+  boardToPlan,
+  buildMission,
+  cleanPoint,
+  endsHome,
+  sameMission,
+  type BoardItem,
+  type Built,
+  type Finish,
+  type LatLon,
+  type Plan,
+  type Pt,
+  type SeqRole,
+} from "../lib/missionPlan";
+import { hookMissionRun, onMissionItem, resetMissionRun, startedAt } from "../lib/missionRun";
 
 const M_PER_DEG = 111_320;
 const TRAIL_CAP = 700;
 
-type LatLon = { lat: number; lon: number };
-type Finish = "rtl" | "loiter";
-type Plan = { points: LatLon[]; alt: number; finish: Finish };
 type View = { lat: number; lon: number; mpp: number };
 type Pose = {
   ok: boolean;
@@ -44,6 +59,8 @@ const KNOWN = new Set([
   "Too many waypoints",
   "Mission rejected",
   "Connection lost during mission upload",
+  "Mission download timed out",
+  "Connection lost during mission download",
 ]);
 
 type TrailPt = LatLon & { truth: LatLon | null; gps: LatLon | null };
@@ -91,6 +108,7 @@ function missionDetail(plan: Plan, origin: LatLon | null, vehicle: string, pose:
   const read = (name: string) => (params[name] != null && Number.isFinite(params[name]) ? (params[name] as number) : null);
   return {
     points: plan.points.length,
+    actions: plan.points.reduce((n, p) => n + (p.acts?.length ?? 0), 0),
     alt_m: plan.alt,
     finish: plan.finish,
     legs_m: legs.slice(0, 40),
@@ -114,7 +132,23 @@ function posNum(v: number | undefined, fallback: number): number {
   return v != null && Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
-type L1Tune = { period: number; damp: number; wpRadius: number; cruise: number };
+type L1Tune = {
+  period: number;
+  damp: number;
+  wpRadius: number;
+  cruise: number;
+  /** WP_LOITER_RAD, signed: negative loiters counter-clockwise. */
+  loiterRad: number;
+  /** RTL_RADIUS, signed; |value| <= 1 falls back to WP_LOITER_RAD. */
+  rtlRad: number;
+  rollLimit: number;
+  /** NAVL1_LIM_BANK; 0 scales loiter radii by EAS2TAS squared only. */
+  limBank: number;
+};
+
+function anyNum(v: number | undefined, fallback: number): number {
+  return v != null && Number.isFinite(v) ? v : fallback;
+}
 
 function pickTune(s: Sample): L1Tune {
   return {
@@ -122,14 +156,29 @@ function pickTune(s: Sample): L1Tune {
     damp: posNum(s.params.NAVL1_DAMPING, 0.75),
     wpRadius: posNum(s.params.WP_RADIUS, 90),
     cruise: posNum(s.params.AIRSPEED_CRUISE, 15),
+    loiterRad: anyNum(s.params.WP_LOITER_RAD, 60),
+    rtlRad: anyNum(s.params.RTL_RADIUS, 0),
+    rollLimit: posNum(s.params.ROLL_LIMIT_DEG, 45),
+    limBank: anyNum(s.params.NAVL1_LIM_BANK, 0),
   };
 }
 
 function tuneEq(a: L1Tune, b: L1Tune): boolean {
-  return a.period === b.period && a.damp === b.damp && a.wpRadius === b.wpRadius && a.cruise === b.cruise;
+  return (
+    a.period === b.period &&
+    a.damp === b.damp &&
+    a.wpRadius === b.wpRadius &&
+    a.cruise === b.cruise &&
+    a.loiterRad === b.loiterRad &&
+    a.rtlRad === b.rtlRad &&
+    a.rollLimit === b.rollLimit &&
+    a.limBank === b.limBank
+  );
 }
 
 type L1Picture = {
+  /** line: AP_L1_Control::update_waypoint. capture / circle: the two branches of update_loiter. */
+  phase: "line" | "capture" | "circle";
   at: LatLon;
   a: LatLon;
   b: LatLon;
@@ -137,24 +186,86 @@ type L1Picture = {
   foot: LatLon | null;
   along: boolean;
   l1m: number;
+  /** Line: cross-track error (+ left of track). Loiter: distance outside the circle. */
   xtrack: number;
   nuDeg: number;
   courseDeg: number;
   leadM: number | null;
   preview: boolean;
+  circle: { center: LatLon; r: number } | null;
+  /** nav_roll this picture asks for: atan(latAccDem / g), clipped to ROLL_LIMIT_DEG. */
+  rollDeg: number;
 };
 
+const GRAVITY = 9.80665;
+
+// AP_Baro EAS2TAS from the standard atmosphere at the plane's altitude above sea level.
+function eas2tasAt(amsl: number): number {
+  const ratio = Math.max(0.2, (288.15 - 0.0065 * Math.max(-500, Math.min(11000, amsl))) / 288.15);
+  return 1 / Math.sqrt(ratio ** 4.2559);
+}
+
+// AP_L1_Control::loiter_radius: the radius the controller really flies.
+function loiterRadius(r: number, tune: L1Tune, e2t: number): number {
+  const e2 = e2t * e2t;
+  const lim = Math.max(0, Math.min(89, tune.limBank));
+  const acc = Math.tan((lim * Math.PI) / 180) * GRAVITY;
+  if (lim === 0 || acc === 0) return r * e2;
+  const seaLevel = (tune.cruise * tune.cruise) / acc;
+  return seaLevel > r ? r * e2 : Math.max(seaLevel * e2, r);
+}
+
+function bankFor(latAcc: number, tune: L1Tune): number {
+  const deg = (Math.atan(latAcc / GRAVITY) * 180) / Math.PI;
+  return Math.max(-tune.rollLimit, Math.min(tune.rollLimit, deg));
+}
+
+// Course over ground from the trail. A chord gives the tangent at its middle, so in a
+// turn it lags; a second chord behind it gives the turn rate to carry it forward to the
+// plane. Without that, a steady loiter reads as drifting outward and the circle bank
+// comes out about 2 degrees high.
 function motionCourse(board: LatLon, yawDeg: number, hdg: number | null, moving: boolean): number {
   for (let i = trail.length - 1; i >= 0; i--) {
     const d = toEnu(board.lat, board.lon, trail[i]);
-    if (Math.hypot(d.e, d.n) >= 3) return Math.atan2(d.e, d.n);
+    const la = Math.hypot(d.e, d.n);
+    if (la < 3) continue;
+    const ca = Math.atan2(d.e, d.n);
+    for (let j = i - 1; j >= 0; j--) {
+      const p = toEnu(trail[i].lat, trail[i].lon, trail[j]);
+      const lb = Math.hypot(p.e, p.n);
+      if (lb < 3) continue;
+      if (lb > 4 * la) break;
+      const turn = (wrap180(((ca - Math.atan2(p.e, p.n)) * 180) / Math.PI) * Math.PI) / 180;
+      return ca + (turn * la) / (la + lb);
+    }
+    return ca;
   }
   if (moving && hdg != null && Number.isFinite(hdg)) return (hdg * Math.PI) / 180;
   return (yawDeg * Math.PI) / 180;
 }
 
+// The ground-speed vector the controller works with. Standing still, it is a cruise-speed
+// preview along the nose so the picture shows what the first moments of flight will do.
+function groundVector(
+  board: LatLon,
+  yawDeg: number,
+  hdg: number | null,
+  gspd: number | null,
+  tune: L1Tune,
+): { speed: number; gsE: number; gsN: number; preview: boolean } {
+  const yaw = (yawDeg * Math.PI) / 180;
+  if ((gspd ?? 0) < 1) {
+    return { speed: tune.cruise, gsE: Math.sin(yaw) * tune.cruise, gsN: Math.cos(yaw) * tune.cruise, preview: true };
+  }
+  const course = motionCourse(board, yawDeg, hdg, true);
+  const speed = Math.max(gspd ?? 0, 0);
+  return { speed, gsE: Math.sin(course) * speed, gsN: Math.cos(course) * speed, preview: false };
+}
+
 // AP_L1_Control::update_waypoint, without the crosstrack integrator.
 // NE cross matches Vector2f (x = north, y = east): +xtrack is left of the track.
+// turnDeg is the turn onto the next leg; AP_L1_Control::turn_distance shrinks the
+// acceptance circle below 90 degrees.
 function solveL1(
   board: LatLon,
   a: LatLon,
@@ -163,6 +274,8 @@ function solveL1(
   hdg: number | null,
   gspd: number | null,
   tune: L1Tune,
+  turnDeg: number | null,
+  e2t: number,
 ): L1Picture | null {
   const ab = toEnu(b.lat, b.lon, a);
   const len = Math.hypot(ab.e, ab.n);
@@ -172,25 +285,11 @@ function solveL1(
   const rel = toEnu(board.lat, board.lon, a);
   const along = rel.n * abN + rel.e * abE;
   const xtrack = rel.n * abE - rel.e * abN;
-  const moving = (gspd ?? 0) >= 1;
   const yaw = (yawDeg * Math.PI) / 180;
-  let speed: number;
-  let gsE: number;
-  let gsN: number;
-  let preview = false;
-  if (moving) {
-    const course = motionCourse(board, yawDeg, hdg, true);
-    speed = Math.max(gspd ?? 0, 0);
-    gsE = Math.sin(course) * speed;
-    gsN = Math.cos(course) * speed;
-    if (speed < 0.1 || gsE * Math.sin(yaw) + gsN * Math.cos(yaw) <= 0) {
-      speed = 0.1;
-      gsE = Math.sin(yaw) * speed;
-      gsN = Math.cos(yaw) * speed;
-    }
-  } else {
-    preview = true;
-    speed = tune.cruise;
+  const gv = groundVector(board, yawDeg, hdg, gspd, tune);
+  let { speed, gsE, gsN } = gv;
+  if (!gv.preview && (speed < 0.1 || gsE * Math.sin(yaw) + gsN * Math.cos(yaw) <= 0)) {
+    speed = 0.1;
     gsE = Math.sin(yaw) * speed;
     gsN = Math.cos(yaw) * speed;
   }
@@ -216,8 +315,12 @@ function solveL1(
   const toRef = toEnu(ref.lat, ref.lon, board);
   const refM = Math.hypot(toRef.e, toRef.n);
   const nuDeg = refM < 0.5 ? 0 : wrap180((Math.atan2(toRef.e, toRef.n) * 180) / Math.PI - courseDeg);
-  const lead = Math.min(tune.wpRadius, l1m);
+  const nuRad = (Math.max(-90, Math.min(90, nuDeg)) * Math.PI) / 180;
+  const latAcc = ((4 * tune.damp * tune.damp * speed * speed) / l1m) * Math.sin(nuRad);
+  const turn = turnDeg == null ? 90 : Math.min(90, Math.abs(turnDeg));
+  const lead = (Math.min(tune.wpRadius * e2t * e2t, l1m) * turn) / 90;
   return {
+    phase: "line",
     at: board,
     a,
     b,
@@ -228,8 +331,82 @@ function solveL1(
     xtrack,
     nuDeg,
     courseDeg,
-    leadM: onLine && len > lead + 8 ? lead : null,
-    preview,
+    leadM: onLine && lead >= 1 && len > lead + 8 ? lead : null,
+    preview: gv.preview,
+    circle: null,
+    rollDeg: bankFor(latAcc, tune),
+  };
+}
+
+// AP_L1_Control::update_loiter. Outside the circle it captures (flies at the centre
+// until the circle controller asks for the tighter turn), then it holds the circle.
+function solveLoiter(
+  board: LatLon,
+  center: LatLon,
+  r: number,
+  dir: 1 | -1,
+  yawDeg: number,
+  hdg: number | null,
+  gspd: number | null,
+  tune: L1Tune,
+  e2t: number,
+): L1Picture {
+  r = loiterRadius(r, tune, e2t);
+  const gv = groundVector(board, yawDeg, hdg, gspd, tune);
+  const speed = Math.max(gv.speed, 1);
+  const { gsE, gsN } = gv;
+  const omega = (2 * Math.PI) / tune.period;
+  const kx = omega * omega;
+  const kv = 2 * tune.damp * omega;
+  const kL1 = 4 * tune.damp * tune.damp;
+  const l1m = L1_INV_PI * tune.damp * tune.period * speed;
+  const rel = toEnu(board.lat, board.lon, center);
+  const relM = Math.hypot(rel.e, rel.n);
+  let uN: number;
+  let uE: number;
+  if (relM > 0.1) {
+    uN = rel.n / relM;
+    uE = rel.e / relM;
+  } else {
+    const yaw = (yawDeg * Math.PI) / 180;
+    uN = Math.cos(yaw);
+    uE = Math.sin(yaw);
+  }
+  const xVelCap = uN * gsE - uE * gsN;
+  const lVelCap = -(gsN * uN + gsE * uE);
+  const nu = Math.atan2(xVelCap, lVelCap);
+  const nuC = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, nu));
+  const capAcc = ((kL1 * speed * speed) / l1m) * Math.sin(nuC);
+  const xVelCirc = -lVelCap;
+  const xErr = relM - r;
+  let pd = xErr * kx + xVelCirc * kv;
+  const velTan = xVelCap * dir;
+  const ctr = (velTan * velTan) / Math.max(0.5 * r, r + xErr);
+  if (lVelCap < 0) {
+    if (velTan < 0) pd = Math.max(pd, 0);
+    else if (xErr < 0) pd = Math.max(pd, -ctr);
+  }
+  const circAcc = dir * (pd + ctr);
+  const capture = xErr > 0 && dir * capAcc < dir * circAcc;
+  const courseDeg = (Math.atan2(gsE, gsN) * 180) / Math.PI;
+  const toCenter = Math.min(relM, l1m);
+  const ref = capture ? fromEnu(-uE * toCenter, -uN * toCenter, board) : board;
+  return {
+    phase: capture ? "capture" : "circle",
+    at: board,
+    a: center,
+    b: center,
+    ref,
+    foot: null,
+    along: false,
+    l1m,
+    xtrack: xErr,
+    nuDeg: capture ? (nu * 180) / Math.PI : 0,
+    courseDeg,
+    leadM: null,
+    preview: gv.preview,
+    circle: { center, r },
+    rollDeg: bankFor(capture ? capAcc : circAcc, tune),
   };
 }
 
@@ -249,30 +426,121 @@ function segmentMiss(a: LatLon, b: LatLon, p: LatLon): number {
   return Math.abs(rel.n * abE - rel.e * abN);
 }
 
-function chooseLeg(
-  verts: LatLon[],
-  board: LatLon,
+type NavStep =
+  | { kind: "line"; a: LatLon; b: LatLon; turnDeg: number | null }
+  | { kind: "loiter"; center: LatLon; r: number; dir: 1 | -1 }
+  | { kind: "takeoff" };
+
+function courseTo(a: LatLon, b: LatLon): number {
+  const d = toEnu(b.lat, b.lon, a);
+  return (Math.atan2(d.e, d.n) * 180) / Math.PI;
+}
+
+// Plane::update_loiter: a radius of 1 m or less falls back to WP_LOITER_RAD, whose sign sets the direction.
+function loiterOf(radius: number, tune: L1Tune): { r: number; dir: 1 | -1 } {
+  if (Math.abs(radius) > 1) return { r: Math.abs(radius), dir: radius < 0 ? -1 : 1 };
+  const r = Math.abs(tune.loiterRad) > 1 ? Math.abs(tune.loiterRad) : 60;
+  return { r, dir: tune.loiterRad < 0 ? -1 : 1 };
+}
+
+// What ArduPlane's navigation runs for the current mode and mission item. `roles` maps
+// MISSION_CURRENT (always a navigation item) to the plan: home, takeoff (a course hold,
+// no L1 track), a point, or RTL. `direct` marks a leg flown without cross-track (after
+// AUTO entry or the takeoff): verify_nav_wp then calls update_waypoint(current_loc,
+// next), straight at the point. Otherwise prev_WP is the previous target, which after
+// a DO_JUMP is the point the jump left from (`prevTarget`). Loiter points and RTL run
+// update_loiter: the line in while cross-tracking and far out, then the circle.
+function chooseNav(
   mode: string,
   wpSeq: number | null,
-  rtlFrom: LatLon | null,
+  board: LatLon,
+  moving: boolean,
   home: LatLon | null,
-): { a: LatLon; b: LatLon } | null {
-  if (mode === "RTL" && rtlFrom && home && dist(rtlFrom, home) > 5) return { a: rtlFrom, b: home };
-  if (verts.length < 2) return null;
-  if (mode === "AUTO" && wpSeq != null && wpSeq >= 1) {
-    const idx = wpSeq <= 1 ? 1 : wpSeq - 1;
-    if (idx >= 1 && idx < verts.length) return { a: verts[idx - 1], b: verts[idx] };
+  origin: LatLon | null,
+  plan: Plan,
+  roles: SeqRole[],
+  direct: boolean,
+  prevTarget: LatLon | null,
+  tune: L1Tune,
+): NavStep | null {
+  const { points, finish } = plan;
+  const rtlHome = home ?? origin;
+  if (mode === "RTL") {
+    if (!rtlHome) return null;
+    const { r, dir } = loiterOf(tune.rtlRad, tune);
+    return { kind: "loiter", center: rtlHome, r, dir };
   }
+  if (!origin) return null;
+  if (mode === "AUTO" && wpSeq != null) {
+    const role = roles[wpSeq];
+    if (!role) return null;
+    if (role.role === "takeoff") return { kind: "takeoff" };
+    if (role.role === "rtl") {
+      if (!rtlHome) return null;
+      const { r, dir } = loiterOf(tune.rtlRad, tune);
+      return { kind: "loiter", center: rtlHome, r, dir };
+    }
+    if (role.role !== "point") return null;
+    if (role.point < 0) {
+      const { r, dir } = loiterOf(0, tune);
+      return { kind: "loiter", center: origin, r, dir };
+    }
+    const i = role.point;
+    const target = points[i];
+    if (!target) return null;
+    const kind = target.kind ?? "wp";
+    const a = direct ? board : (prevTarget ?? (i > 0 ? points[i - 1] : origin));
+    const loiters = kind === "time" || kind === "turns" || (kind === "wp" && finish === "loiter" && i === points.length - 1);
+    if (loiters) {
+      const { r, dir } = loiterOf(0, tune);
+      if (!direct && dist(board, target) > 3 * r) return { kind: "line", a, b: target, turnDeg: null };
+      return { kind: "loiter", center: target, r, dir };
+    }
+    if (kind === "land") return { kind: "line", a, b: target, turnDeg: null };
+    const next = nextAfter(plan, i, origin);
+    const turnDeg = next && dist(target, next) > 1 ? wrap180(courseTo(target, next) - courseTo(a, target)) : null;
+    return { kind: "line", a, b: target, turnDeg };
+  }
+  // Other modes do not fly the plan. On the ground, preview the leg nearest the plane.
+  if (moving) return null;
+  const verts = [origin, ...points];
+  const pathVerts = finish === "rtl" && points.length ? [...verts, origin] : verts;
+  if (pathVerts.length < 2) return null;
   let bestI = 1;
   let best = Infinity;
-  for (let i = 1; i < verts.length; i++) {
-    const err = segmentMiss(verts[i - 1], verts[i], board);
+  for (let i = 1; i < pathVerts.length; i++) {
+    const err = segmentMiss(pathVerts[i - 1], pathVerts[i], board);
     if (err < best) {
       best = err;
       bestI = i;
     }
   }
-  return { a: verts[bestI - 1], b: verts[bestI] };
+  return { kind: "line", a: pathVerts[bestI - 1], b: pathVerts[bestI], turnDeg: null };
+}
+
+/** The place the vehicle heads for after point i: a jump's target, the next point, or home. */
+function nextAfter(plan: Plan, i: number, origin: LatLon): LatLon | null {
+  const jump = plan.points[i]?.acts?.find((a) => a.kind === "jump");
+  if (jump && plan.points[jump.a]) return plan.points[jump.a];
+  if (i + 1 < plan.points.length) return plan.points[i + 1];
+  return endsHome(plan) ? origin : null;
+}
+
+// Where a point's actions run. A plane counts a waypoint reached on entering the
+// acceptance circle (AP_L1_Control::turn_distance), so they run that far before it.
+function actionAnchor(plan: Plan, i: number, origin: LatLon, vehicle: string, tune: L1Tune, e2t: number): LatLon {
+  const p = plan.points[i];
+  if (vehicle !== "plane" || (p.kind ?? "wp") !== "wp") return p;
+  const prev = i > 0 ? plan.points[i - 1] : origin;
+  const leg = dist(prev, p);
+  const next = nextAfter(plan, i, origin);
+  const turn = next && dist(p, next) > 1 ? Math.abs(wrap180(courseTo(p, next) - courseTo(prev, p))) : 90;
+  const l1 = L1_INV_PI * tune.damp * tune.period * tune.cruise;
+  const lead = Math.min(tune.wpRadius * e2t * e2t, l1) * Math.min(90, turn) / 90;
+  if (leg < 1 || lead < 1) return p;
+  const d = toEnu(prev.lat, prev.lon, p);
+  const k = Math.min(lead, leg) / leg;
+  return fromEnu(d.e * k, d.n * k, p);
 }
 
 function pair(lat: number | null | undefined, lon: number | null | undefined): LatLon | null {
@@ -364,15 +632,26 @@ function storeKey(vehicle: string): string {
   return "arduloops.mission.v1." + vehicle;
 }
 
+
+function altMax(vehicle: string): number {
+  return vehicle === "plane" ? 400 : 120;
+}
+
+function clampAlt(n: number, vehicle: string): number {
+  return Math.min(altMax(vehicle), Math.max(2, Math.round(n)));
+}
+
 function loadPlan(vehicle: "copter" | "plane"): Plan {
   const alt = vehicle === "plane" ? 60 : 20;
   try {
     const raw = JSON.parse(localStorage.getItem(storeKey(vehicle)) || "") as Partial<Plan>;
-    const points = Array.isArray(raw.points) ? raw.points.filter(isLat).slice(0, 40) : [];
+    const points = Array.isArray(raw.points)
+      ? (raw.points as unknown[]).map((pt) => cleanPoint(pt, vehicle)).filter((pt): pt is Pt => pt != null).slice(0, MAX_POINTS)
+      : [];
     const nextAlt = Number(raw.alt);
     return {
       points,
-      alt: Number.isFinite(nextAlt) ? Math.min(vehicle === "plane" ? 400 : 120, Math.max(2, nextAlt)) : alt,
+      alt: Number.isFinite(nextAlt) && nextAlt > 0 ? clampAlt(nextAlt, vehicle) : alt,
       finish: raw.finish === "loiter" ? "loiter" : "rtl",
     };
   } catch {
@@ -380,7 +659,13 @@ function loadPlan(vehicle: "copter" | "plane"): Plan {
   }
 }
 
+// Longitude goes the short way round, so a plan near ±180° stays in one piece.
 function project(lat: number, lon: number, view: View, w: number, h: number): { x: number; y: number } {
+  return projectRaw(lat, view.lon + wrap180(lon - view.lon), view, w, h);
+}
+
+// No wrap: tile edges run continuously past ±180° when the whole world is in view.
+function projectRaw(lat: number, lon: number, view: View, w: number, h: number): { x: number; y: number } {
   const d = toEnu(lat, lon, view);
   return { x: w / 2 + d.e / view.mpp, y: h / 2 - d.n / view.mpp };
 }
@@ -399,6 +684,133 @@ function zoomAbout(view: View, x: number, y: number, w: number, h: number, nextM
   const cos = Math.cos((lat * Math.PI) / 180) || 1e-6;
   const lon = under.lon - east / (M_PER_DEG * cos);
   return { lat, lon, mpp: nextMpp };
+}
+
+// Base map layers. Tiles are Web Mercator XYZ; each tile's corners go through
+// project(), and toEnu is separable in lat/lon, so tiles land as exact
+// axis-aligned rects in our local frame with no gaps between neighbours.
+type Layer = "grid" | "osm" | "sat" | "topo";
+const LAYER_KEY = "arduloops.mission.layer";
+const LAYERS: Record<Exclude<Layer, "grid">, { url: (z: number, x: number, y: number) => string; maxZoom: number; credit: string }> = {
+  osm: {
+    url: (z, x, y) => `https://tile.openstreetmap.org/${z}/${x}/${y}.png`,
+    maxZoom: 19,
+    credit: "© OpenStreetMap contributors",
+  },
+  sat: {
+    url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
+    maxZoom: 19,
+    credit: "Imagery © Esri, Maxar, Earthstar Geographics",
+  },
+  topo: {
+    url: (z, x, y) => `https://tile.opentopomap.org/${z}/${x}/${y}.png`,
+    maxZoom: 17,
+    credit: "© OpenStreetMap contributors, SRTM · © OpenTopoMap (CC-BY-SA)",
+  },
+};
+const TILE_CAP = 160;
+
+function loadLayer(): Layer {
+  try {
+    const raw = localStorage.getItem(LAYER_KEY);
+    if (raw === "osm" || raw === "sat" || raw === "topo") return raw;
+  } catch {
+    /* ignore */
+  }
+  return "grid";
+}
+
+function tileX(lon: number, n: number): number {
+  return ((lon + 180) / 360) * n;
+}
+
+function tileY(lat: number, n: number): number {
+  const r = (Math.max(-85.0511, Math.min(85.0511, lat)) * Math.PI) / 180;
+  return ((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n;
+}
+
+function tileLon(x: number, n: number): number {
+  return (x / n) * 360 - 180;
+}
+
+function tileLat(y: number, n: number): number {
+  return (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / n))) * 180) / Math.PI;
+}
+
+function Tiles({ layer, view, w, h }: { layer: Exclude<Layer, "grid">; view: View; w: number; h: number }) {
+  const src = LAYERS[layer];
+  const cos = Math.cos((view.lat * Math.PI) / 180) || 1e-6;
+  // Pick the zoom whose native m/px is at or just below ours, so tiles are never upscaled
+  // (until the layer's max zoom); back off if the viewport would need too many tiles.
+  let z = Math.max(0, Math.min(src.maxZoom, Math.ceil(Math.log2((156_543.03392 * cos) / view.mpp))));
+  const nw = unproject(0, 0, view, w, h);
+  const se = unproject(w, h, view, w, h);
+  let x0 = 0, x1 = 0, y0 = 0, y1 = 0, n = 1;
+  for (;;) {
+    n = 2 ** z;
+    x0 = Math.floor(tileX(nw.lon, n));
+    x1 = Math.floor(tileX(se.lon, n));
+    y0 = Math.max(0, Math.floor(tileY(nw.lat, n)));
+    y1 = Math.min(n - 1, Math.floor(tileY(se.lat, n)));
+    if (z === 0 || (x1 - x0 + 1) * (y1 - y0 + 1) <= TILE_CAP) break;
+    z -= 1;
+  }
+  const out: ReactElement[] = [];
+  for (let ty = y0; ty <= y1; ty++) {
+    const top = projectRaw(tileLat(ty, n), view.lon, view, w, h).y;
+    const bottom = projectRaw(tileLat(ty + 1, n), view.lon, view, w, h).y;
+    for (let tx = x0; tx <= x1; tx++) {
+      const left = projectRaw(view.lat, tileLon(tx, n), view, w, h).x;
+      const right = projectRaw(view.lat, tileLon(tx + 1, n), view, w, h).x;
+      const wx = ((tx % n) + n) % n;
+      // +0.5 px overlap hides antialiasing seams between neighbours.
+      out.push(
+        <image
+          key={`${z}/${tx}/${ty}`}
+          href={src.url(z, wx, ty)}
+          x={left}
+          y={top}
+          width={right - left + 0.5}
+          height={bottom - top + 0.5}
+          preserveAspectRatio="none"
+        />,
+      );
+    }
+  }
+  return <g className={"mission-tiles " + layer} pointerEvents="none">{out}</g>;
+}
+
+// Closest zoom is 0.15 m/px. Farthest shows the whole world across the map width.
+// Waypoints are only added up to EDIT_MPP so a stray click cannot drop one a continent away.
+const MIN_MPP = 0.15;
+const EDIT_MPP = 50;
+const EARTH_M = 40_075_016;
+
+// Our frame scales longitude by cos(centre lat), so 360° of longitude spans EARTH_M * cos metres.
+function maxMpp(w: number, lat: number): number {
+  const cos = Math.max(0.2, Math.cos((lat * Math.PI) / 180));
+  return Math.max(EDIT_MPP, (EARTH_M * cos) / Math.max(w, 1));
+}
+
+function wrapLon(lon: number): number {
+  return ((((lon + 180) % 360) + 360) % 360) - 180;
+}
+
+// Keep the map edge from passing ±85° (the tile limit) and the zoom within maxMpp.
+// Zoomed out, this pulls the centre toward the equator, where cos is near 1 and
+// the world fits once across the width instead of repeating.
+function settle(v: View, w: number, h: number): View {
+  let mpp = Math.min(v.mpp, maxMpp(w, 0));
+  const half = ((h / 2) * mpp) / M_PER_DEG;
+  const lim = Math.max(0, 85 - half);
+  const lat = Math.max(-lim, Math.min(lim, v.lat));
+  mpp = Math.min(mpp, maxMpp(w, lat));
+  return { lat, lon: wrapLon(v.lon), mpp };
+}
+
+function onEarth(p: LatLon): LatLon | null {
+  const q = { lat: p.lat, lon: wrapLon(p.lon) };
+  return isLat(q) && Math.abs(q.lat) <= 85 ? q : null;
 }
 
 function wheelSteps(ev: WheelEvent, height: number): number {
@@ -466,27 +878,6 @@ function ReadNum({
   );
 }
 
-function missionItems(origin: LatLon, points: LatLon[], alt: number, finish: Finish): MissionItem[] {
-  const items: MissionItem[] = [
-    { kind: "waypoint", lat: origin.lat, lon: origin.lon, alt: 0 },
-    { kind: "takeoff", lat: origin.lat, lon: origin.lon, alt },
-  ];
-  points.forEach((p, i) => {
-    const last = i === points.length - 1;
-    items.push({
-      kind: finish === "loiter" && last ? "loiter" : "waypoint",
-      lat: p.lat,
-      lon: p.lon,
-      alt,
-    });
-  });
-  if (finish === "loiter" && points.length === 0) {
-    items.push({ kind: "loiter", lat: origin.lat, lon: origin.lon, alt });
-  }
-  if (finish === "rtl") items.push({ kind: "rtl", lat: origin.lat, lon: origin.lon, alt: 0 });
-  return items;
-}
-
 export function MissionView({
   current,
   ids,
@@ -502,6 +893,8 @@ export function MissionView({
   const restart = usePicked((s) => s.params.MIS_RESTART);
   const tune = usePicked(pickTune, tuneEq);
   const [plan, setPlan] = useState<Plan>(() => loadPlan(vehicle));
+  // The field keeps what is typed; the plan only takes a value inside the limits.
+  const [altText, setAltText] = useState(() => String(plan.alt));
   const [view, setView] = useState<View | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [busy, setBusy] = useState(false);
@@ -514,13 +907,26 @@ export function MissionView({
       return false;
     }
   });
+  const [layer, setLayer] = useState<Layer>(loadLayer);
+  const [sel, setSel] = useState<number | null>(null);
+  // The mission last read from the vehicle; the plan is "on board" while it matches.
+  const [boardMission, setBoardMission] = useState<BoardItem[] | null>(null);
+  const [, setTick] = useState(0);
   const mapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const viewRef = useRef(view);
   const sizeRef = useRef(size);
   const opened = useRef(false);
   const drag = useRef<{ x: number; y: number; moved: boolean; point: number | null } | null>(null);
-  const rtlEntry = useRef<LatLon | null>(null);
+  // Whether ArduPlane flies the current AUTO leg without cross-track.
+  const legStart = useRef<{ mode: string | null; seq: number | null; at: number; direct: boolean; prevTarget: LatLon | null }>({
+    mode: null,
+    seq: null,
+    at: 0,
+    direct: false,
+    prevTarget: null,
+  });
+  const builtRef = useRef<{ built: Built | null; plan: Plan; synced: boolean }>({ built: null, plan, synced: false });
   const onWheelRef = useRef<(ev: WheelEvent) => void>(() => {});
   viewRef.current = view;
   sizeRef.current = size;
@@ -535,11 +941,11 @@ export function MissionView({
     ev.preventDefault();
     const steps = wheelSteps(ev, box.h);
     if (!steps) return;
-    const nextMpp = Math.min(50, Math.max(0.15, current.mpp * Math.exp(steps * Math.log(1.12))));
+    const nextMpp = Math.min(maxMpp(box.w, current.lat), Math.max(MIN_MPP, current.mpp * Math.exp(steps * Math.log(1.12))));
     if (nextMpp === current.mpp) return;
     const x = ((ev.clientX - rect.left) / rect.width) * box.w;
     const y = ((ev.clientY - rect.top) / rect.height) * box.h;
-    const next = zoomAbout(current, x, y, box.w, box.h, nextMpp);
+    const next = settle(zoomAbout(current, x, y, box.w, box.h, nextMpp), box.w, box.h);
     viewRef.current = next;
     setView(next);
   };
@@ -565,6 +971,41 @@ export function MissionView({
   }, [plan, originKey, vehicle, pose.mode, pose.wpSeq, tune]);
   useEffect(() => () => setScreenView(null), []);
 
+  // Mission progress comes from ArduPilot's "Mission: <seq> <name>" reports.
+  useEffect(() => {
+    hookMissionRun();
+    return onMissionItem((seq) => {
+      const { built: b, plan: pl, synced: on } = builtRef.current;
+      const role = on ? b?.roles[seq] : undefined;
+      if (role?.role !== "act") return;
+      const act = pl.points[role.point]?.acts?.[role.act];
+      if (act) addLog(t("Point {n}: {what}", { n: role.point + 1, what: actText(act, t) }), "ok");
+      setTick((n) => n + 1);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  // Read the board's mission once per link, so the screen knows whether the plan is on board.
+  const autoRead = useRef(false);
+  useEffect(() => {
+    if (!pose.ok) {
+      autoRead.current = false;
+      return;
+    }
+    if (autoRead.current) return;
+    autoRead.current = true;
+    const id = window.setTimeout(() => {
+      void readMission().then((r) => {
+        if ("items" in r) setBoardMission(r.items);
+      });
+    }, 1500);
+    return () => window.clearTimeout(id);
+  }, [pose.ok]);
+  useEffect(() => {
+    if (pose.mode !== "AUTO") return;
+    const id = window.setInterval(() => setTick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [pose.mode]);
+
   useEffect(() => {
     try {
       localStorage.setItem(storeKey(vehicle), JSON.stringify(plan));
@@ -576,10 +1017,11 @@ export function MissionView({
   useEffect(() => {
     try {
       localStorage.setItem("arduloops.mission.l1", showL1 ? "1" : "0");
+      localStorage.setItem(LAYER_KEY, layer);
     } catch {
       /* ignore */
     }
-  }, [showL1]);
+  }, [showL1, layer]);
 
   useEffect(() => {
     const el = mapRef.current;
@@ -595,23 +1037,25 @@ export function MissionView({
     const kept = pts.filter(isLat);
     if (!kept.length) return;
     const { w, h } = sizeRef.current;
+    // Average longitude as offsets from the first point, so points either side of ±180° centre between them.
+    const lon0 = kept[0].lon;
     let lat = 0;
-    let lon = 0;
+    let dLon = 0;
     for (const p of kept) {
       lat += p.lat;
-      lon += p.lon;
+      dLon += wrap180(p.lon - lon0);
     }
     lat /= kept.length;
-    lon /= kept.length;
+    const lon = wrapLon(lon0 + dLon / kept.length);
     const c = { lat, lon };
     let max = 25;
     for (const p of kept) {
-      const d = toEnu(p.lat, p.lon, c);
+      const d = toEnu(p.lat, lon + wrap180(p.lon - lon), c);
       max = Math.max(max, Math.abs(d.e), Math.abs(d.n));
     }
     const span = Math.max(80, Math.min(w, h));
     const mpp = (max * 2.6) / span;
-    setView({ lat, lon, mpp: Math.min(50, Math.max(0.15, mpp)) });
+    setView(settle({ lat, lon, mpp: Math.min(EDIT_MPP, Math.max(MIN_MPP, mpp)) }, w, h));
   }
 
   useEffect(() => {
@@ -683,13 +1127,14 @@ export function MissionView({
     if (d.point != null) {
       const at = localXY(ev);
       if (!at) return;
-      const next = unproject(at.x, at.y, current, box.w, box.h);
+      const next = onEarth(unproject(at.x, at.y, current, box.w, box.h));
+      if (!next) return;
       const idx = d.point;
       setPlan((p) => ({ ...p, points: p.points.map((pt, i) => (i === idx ? next : pt)) }));
       return;
     }
     const shifted = fromEnu(-dx * current.mpp, dy * current.mpp, current);
-    setView({ ...current, lat: shifted.lat, lon: shifted.lon });
+    setView(settle({ ...current, lat: shifted.lat, lon: shifted.lon }, box.w, box.h));
   }
 
   function onPointerUp(ev: ReactPointerEvent<SVGSVGElement>) {
@@ -698,11 +1143,16 @@ export function MissionView({
     drag.current = null;
     const current = viewRef.current;
     const box = sizeRef.current;
-    if (!d || d.moved || d.point != null || !current || box.w < 40) return;
+    if (d && !d.moved && d.point != null) {
+      setSel((s) => (s === d.point ? null : d.point));
+      return;
+    }
+    if (!d || d.moved || d.point != null || !current || box.w < 40 || current.mpp > EDIT_MPP) return;
     const at = localXY(ev);
     if (!at) return;
-    const next = unproject(at.x, at.y, current, box.w, box.h);
-    setPlan((p) => ({ ...p, points: [...p.points, next].slice(0, 40) }));
+    const next = onEarth(unproject(at.x, at.y, current, box.w, box.h));
+    if (!next) return;
+    setPlan((p) => (p.points.length >= MAX_POINTS ? p : { ...p, points: [...p.points, next] }));
   }
 
   function onNorth() {
@@ -748,20 +1198,57 @@ export function MissionView({
     addLog(KNOWN.has(message) ? t(message) : message, bad ? "bad" : "ok");
   }
 
+  async function readBack(): Promise<BoardItem[] | null> {
+    const r = await readMission();
+    if ("error" in r) {
+      say(r.error, true);
+      return null;
+    }
+    setBoardMission(r.items);
+    return r.items;
+  }
+
   async function onUpload() {
     if (!origin || busy) return;
     setBusy(true);
-    const err = await uploadMission(missionItems(origin, plan.points, plan.alt, plan.finish));
+    const b = buildMission(origin, { ...plan, alt: clampAlt(plan.alt, vehicle) }, vehicle);
+    const err = await uploadMission(b.items);
+    if (!err) {
+      resetMissionRun();
+      // Read it back: the plan counts as on board only once the vehicle returns the same items.
+      const got = await readBack();
+      setBusy(false);
+      if (got && !sameMission(b.items, got)) say(t("The board returned a different mission."), true);
+      else say("Mission uploaded", false);
+      return;
+    }
     setBusy(false);
-    say(err ?? "Mission uploaded", err != null);
+    say(err, true);
   }
 
   async function onErase() {
     if (!pose.ok || busy) return;
     setBusy(true);
     const err = await uploadMission([]);
+    if (!err) await readBack();
     setBusy(false);
     say(err ?? "Mission cleared", err != null);
+  }
+
+  async function onRead() {
+    if (!pose.ok || busy) return;
+    setBusy(true);
+    await readBack();
+    setBusy(false);
+  }
+
+  function onLoadBoard() {
+    if (!boardMission) return;
+    const { plan: next, skipped } = boardToPlan(boardMission, vehicle, plan.alt);
+    setPlan({ ...next, alt: clampAlt(next.alt, vehicle) });
+    setAltText(String(clampAlt(next.alt, vehicle)));
+    setSel(null);
+    if (skipped) say(t("{n} items this screen does not edit were left out.", { n: skipped }), true);
   }
 
   function onRestart(on: boolean) {
@@ -783,17 +1270,92 @@ export function MissionView({
   const offHot = (offM ?? 0) > 2;
   const hdg = pose.hdg == null ? null : ((Math.round(pose.hdg) % 360) + 360) % 360;
   const noteText = note ? (KNOWN.has(note) ? t(note) : note) : null;
-  const route = [origin, ...plan.points, plan.finish === "rtl" ? origin : null].filter(isLat);
-  if (pose.mode !== "RTL") rtlEntry.current = null;
-  else if (!rtlEntry.current && board) rtlEntry.current = board;
-  const l1 =
+  const route = [origin, ...plan.points, endsHome(plan) ? origin : null].filter(isLat);
+  const built = origin ? buildMission(origin, { ...plan, alt: clampAlt(plan.alt, vehicle) }, vehicle) : null;
+  const synced = !!(built && boardMission && sameMission(built.items, boardMission));
+  builtRef.current = { built, plan, synced };
+  const livePoint = (() => {
+    if (!synced || !built || pose.mode !== "AUTO" || pose.wpSeq == null) return null;
+    const role = built.roles[pose.wpSeq];
+    return role?.role === "point" && role.point >= 0 ? role.point : null;
+  })();
+  const wpDist = getSnapshot().wp_dist ?? null;
+  function actState(i: number, j: number): ActState {
+    if (!synced || !built) return null;
+    const ps = startedAt(built.pointSeq[i]);
+    if (ps == null) return { state: "pending" };
+    const seq = built.pointSeq[i] + 1 + j;
+    const s = startedAt(seq);
+    const acts = plan.points[i]?.acts ?? [];
+    const act = acts[j];
+    if (!act || s == null || s < ps) return { state: "pending" };
+    // A condition is met once the next held action starts (a jump is not held).
+    const heldK = acts.findIndex((x, k) => k > j && x.kind !== "jump");
+    if (ACTS[act.kind].cond && heldK > j) {
+      const nextS = startedAt(seq + (heldK - j));
+      if (nextS == null || nextS < s) {
+        const left =
+          act.kind === "delay"
+            ? t("{v} s", { v: Math.max(0, Math.ceil(act.a - (Date.now() - s) / 1000)) })
+            : act.kind === "distance" && wpDist != null
+              ? t("{v} m", { v: Math.max(0, Math.round(wpDist - act.a)) })
+              : act.kind === "yaw" && pose.hdg != null
+                ? t("now {v}°", { v: ((Math.round(pose.hdg) % 360) + 360) % 360 })
+                : undefined;
+        return { state: "wait", left };
+      }
+    }
+    return { state: "done" };
+  }
+  // Mode::enter and verify_takeoff clear next_wp_crosstrack: the leg after AUTO entry
+  // or after the takeoff is flown direct. MISSION_CURRENT can trail HEARTBEAT, so a
+  // sequence change right after entry still counts as the entry leg. A page opened
+  // mid-AUTO cannot tell and assumes cross-track.
+  {
+    const ls = legStart.current;
+    const now = Date.now();
+    if (ls.mode == null) {
+      ls.mode = pose.mode;
+      ls.seq = pose.wpSeq;
+    } else if (pose.mode !== "AUTO") {
+      ls.direct = false;
+      ls.prevTarget = null;
+    } else if (ls.mode !== "AUTO") {
+      ls.direct = true;
+      ls.prevTarget = null;
+      ls.at = now;
+    } else if (pose.wpSeq !== ls.seq) {
+      ls.direct = ls.seq === 1 || now - ls.at < 1500;
+      const was = ls.seq != null ? built?.roles[ls.seq] : undefined;
+      ls.prevTarget = was?.role === "point" ? (was.point < 0 ? origin : (plan.points[was.point] ?? null)) : null;
+    }
+    ls.mode = pose.mode;
+    ls.seq = pose.wpSeq;
+  }
+  const nav =
     vehicle === "plane" && showL1 && board
-      ? (() => {
-          const verts = origin ? [origin, ...plan.points] : [];
-          if (origin && plan.finish === "rtl" && plan.points.length) verts.push(origin);
-          const leg = chooseLeg(verts, board, pose.mode, pose.wpSeq, rtlEntry.current, home);
-          return leg ? solveL1(board, leg.a, leg.b, pose.yaw, pose.hdg, pose.gspd, tune) : null;
-        })()
+      ? chooseNav(
+          pose.mode,
+          pose.wpSeq,
+          board,
+          (pose.gspd ?? 0) >= 1,
+          home,
+          origin,
+          plan,
+          built?.roles ?? [],
+          legStart.current.direct,
+          legStart.current.prevTarget,
+          tune,
+        )
+      : null;
+  const e2t = eas2tasAt((getSnapshot().home_alt_m ?? 0) + (pose.alt ?? 0));
+  const l1 =
+    board && nav
+      ? nav.kind === "line"
+        ? solveL1(board, nav.a, nav.b, pose.yaw, pose.hdg, pose.gspd, tune, nav.turnDeg, e2t)
+        : nav.kind === "loiter"
+          ? solveLoiter(board, nav.center, nav.r, nav.dir, pose.yaw, pose.hdg, pose.gspd, tune, e2t)
+          : null
       : null;
 
   return (
@@ -813,7 +1375,7 @@ export function MissionView({
         </div>
       </div>
       <div className="mission-body">
-        <div className="mission-map" ref={mapRef}>
+        <div className={"mission-map" + (layer === "grid" ? "" : " tiled")} ref={mapRef}>
           <svg
             ref={svgRef}
             width={Math.max(size.w, 1)}
@@ -827,8 +1389,25 @@ export function MissionView({
             onPointerCancel={() => { drag.current = null; lockSelect(false); }}
             onLostPointerCapture={() => lockSelect(false)}
           >
+            {view && size.w > 40 && layer !== "grid" ? <Tiles layer={layer} view={view} w={size.w} h={size.h} /> : null}
             {view && size.w > 40 ? (
               <MapArt
+                marks={
+                  origin ? (
+                    <MissionMarks
+                      plan={plan}
+                      origin={origin}
+                      vehicle={vehicle}
+                      tune={tune}
+                      e2t={e2t}
+                      sel={sel}
+                      actState={actState}
+                      xy={(p) => project(p.lat, p.lon, view, size.w, size.h)}
+                      mpp={view.mpp}
+                    />
+                  ) : null
+                }
+                tiled={layer !== "grid"}
                 view={view}
                 w={size.w}
                 h={size.h}
@@ -840,14 +1419,34 @@ export function MissionView({
                 gps={gps}
                 truth={truth}
                 yaw={pose.yaw}
-                wpSeq={pose.mode === "AUTO" ? pose.wpSeq : null}
+                livePoint={livePoint}
+                homeHot={(() => {
+                  if (pose.mode !== "AUTO" || pose.wpSeq == null || !built) return false;
+                  const role = built.roles[pose.wpSeq];
+                  return role?.role === "home" || role?.role === "rtl" || (role?.role === "point" && role.point < 0);
+                })()}
                 l1={l1}
               />
             ) : null}
           </svg>
-          <button type="button" className="mission-fit" onClick={() => fitTo([origin, board, truth, gps, ...plan.points].filter(isLat))}>
-            {t("Fit map")}
-          </button>
+          <div className="mission-tools">
+            <select
+              className="mission-layer"
+              value={layer}
+              onChange={(ev) => setLayer(ev.target.value as Layer)}
+              aria-label={t("Map layer")}
+              title={t("Map layer")}
+            >
+              <option value="grid">{t("Grid")}</option>
+              <option value="osm">{t("Street map")}</option>
+              <option value="sat">{t("Satellite")}</option>
+              <option value="topo">{t("Topographic")}</option>
+            </select>
+            <button type="button" className="mission-fit" onClick={() => fitTo([origin, board, truth, gps, ...plan.points].filter(isLat))}>
+              {t("Fit map")}
+            </button>
+          </div>
+          {layer !== "grid" ? <span className="mission-credit">{LAYERS[layer].credit}</span> : null}
           <div className="mission-read">
             <span className="mission-mode">{pose.mode}</span>
             <span>
@@ -890,13 +1489,20 @@ export function MissionView({
             <input
               type="number"
               min={2}
-              max={vehicle === "plane" ? 400 : 120}
+              max={altMax(vehicle)}
               step={1}
-              value={plan.alt}
+              value={altText}
               onChange={(ev) => {
-                const n = Number(ev.target.value);
-                if (!Number.isFinite(n)) return;
-                setPlan((p) => ({ ...p, alt: n }));
+                const text = ev.target.value;
+                setAltText(text);
+                const n = Number(text);
+                if (text.trim() !== "" && Number.isFinite(n) && n >= 2 && n <= altMax(vehicle)) {
+                  setPlan((p) => ({ ...p, alt: Math.round(n) }));
+                }
+              }}
+              onBlur={() => setAltText(String(plan.alt))}
+              onKeyDown={(ev) => {
+                if (ev.key === "Enter") ev.currentTarget.blur();
               }}
             />
           </label>
@@ -937,14 +1543,24 @@ export function MissionView({
               {t("Show L1 track")}
             </label>
           ) : null}
+          {nav?.kind === "takeoff" ? <p className="mission-hint">{t("Takeoff: course hold, no L1 track.")}</p> : null}
           {l1 ? (
-            <p className="mission-hint">
+            <p className="mission-hint mission-l1">
               {l1.preview ? `${t("cruise")} · ` : ""}
-              {t("L1 {n} m · Nu {nu}° · off {x} m", {
-                n: Math.round(l1.l1m),
-                nu: Math.round(l1.nuDeg),
-                x: Math.abs(l1.xtrack).toFixed(0),
-              })}
+              {l1.phase === "line"
+                ? t("L1 {n} m · Nu {nu}° · off {x} m", {
+                    n: Math.round(l1.l1m),
+                    nu: Math.round(l1.nuDeg),
+                    x: Math.abs(l1.xtrack).toFixed(0),
+                  })
+                : l1.phase === "capture"
+                  ? t("Loiter {r} m: to the centre · Nu {nu}°", { r: Math.round(l1.circle?.r ?? 0), nu: Math.round(l1.nuDeg) })
+                  : t("Loiter {r} m: on the circle · off {x} m", {
+                      r: Math.round(l1.circle?.r ?? 0),
+                      x: l1.xtrack.toFixed(0),
+                    })}
+              {" · "}
+              {t("bank {b}°", { b: Math.round(l1.rollDeg) })}
             </p>
           ) : null}
           <div className="mission-pts-head">
@@ -953,28 +1569,23 @@ export function MissionView({
               {t("Clear points")}
             </button>
           </div>
-          <ol className="mission-pts">
-            {plan.points.map((p, i) => {
-              const rel = origin ? toEnu(p.lat, p.lon, origin) : null;
-              const live = pose.mode === "AUTO" && pose.wpSeq === i + 2;
-              return (
-                <li key={i} className={live ? "on" : undefined}>
-                  <span>
-                    {t("Waypoint {n}", { n: i + 1 })}
-                    {rel ? ` · ${Math.round(rel.n)} N ${Math.round(rel.e)} E` : ""}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={t("Remove waypoint")}
-                    onClick={() => setPlan((prev) => ({ ...prev, points: prev.points.filter((_, j) => j !== i) }))}
-                  >
-                    ×
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-          <p className="mission-hint">{t("Click the map to add a waypoint.")}</p>
+          <MissionEditor
+            plan={plan}
+            setPlan={setPlan}
+            vehicle={vehicle}
+            origin={origin}
+            sel={sel}
+            onSelect={setSel}
+            livePoint={livePoint}
+            actState={actState}
+          />
+          <p className="mission-hint">
+            {plan.points.length >= MAX_POINTS
+              ? t("{n} waypoints is the limit.", { n: MAX_POINTS })
+              : view && view.mpp > EDIT_MPP
+                ? t("Zoom in to add waypoints.")
+                : t("Click the map to add a waypoint.")}
+          </p>
           <ul className="mission-legend">
             <li><i className="swatch board" />{t("board")}</li>
             <li><i className="swatch gps" />{t("GPS fix")}</li>
@@ -988,9 +1599,28 @@ export function MissionView({
               </>
             ) : null}
           </ul>
-          <button type="button" disabled={!pose.ok || busy} onClick={() => void onErase()}>
-            {t("Erase mission")}
-          </button>
+          <div className="mission-board">
+            <button type="button" disabled={!pose.ok || busy} onClick={() => void onRead()}>
+              {t("Read from board")}
+            </button>
+            <button type="button" disabled={!pose.ok || busy} onClick={() => void onErase()}>
+              {t("Erase mission")}
+            </button>
+          </div>
+          {boardMission ? (
+            <p className={synced ? "mission-hint mission-sync on" : "mission-hint mission-sync off"}>
+              {synced
+                ? t("The board has this plan.")
+                : boardMission.length <= 1
+                  ? t("The board has no mission.")
+                  : t("The board has a different mission: {n} items.", { n: boardMission.length })}
+              {!synced && boardMission.length > 1 ? (
+                <button type="button" onClick={onLoadBoard}>
+                  {t("Load into plan")}
+                </button>
+              ) : null}
+            </p>
+          ) : null}
           {noteText ? <p className={noteBad ? "mission-msg bad" : "mission-msg"}>{noteText}</p> : null}
           <p className="mission-hint">
             {t("Arm from the side, then AUTO. Jam and glitch sit on the simulation rail: the board follows the GPS fix, and truth is where the vehicle actually is.")}
@@ -1002,6 +1632,8 @@ export function MissionView({
 }
 
 function MapArt({
+  marks,
+  tiled,
   view,
   w,
   h,
@@ -1013,9 +1645,12 @@ function MapArt({
   gps,
   truth,
   yaw,
-  wpSeq,
+  livePoint,
+  homeHot,
   l1,
 }: {
+  marks: ReactElement | null;
+  tiled: boolean;
   view: View;
   w: number;
   h: number;
@@ -1027,7 +1662,8 @@ function MapArt({
   gps: LatLon | null;
   truth: LatLon | null;
   yaw: number;
-  wpSeq: number | null;
+  livePoint: number | null;
+  homeHot: boolean;
   l1: L1Picture | null;
 }) {
   const step = gridStep(view.mpp);
@@ -1064,11 +1700,12 @@ function MapArt({
   return (
     <>
       {lines.map((ln, i) => (
-        <line key={i} x1={ln.x1} y1={ln.y1} x2={ln.x2} y2={ln.y2} stroke="#24303a" strokeWidth="1" />
+        <line key={i} x1={ln.x1} y1={ln.y1} x2={ln.x2} y2={ln.y2} stroke={tiled ? "#ffffff" : "#24303a"} strokeOpacity={tiled ? 0.18 : 1} strokeWidth="1" />
       ))}
-      <text x={w / 2} y={16} textAnchor="middle" fill="#8b98a8" fontSize="11">N</text>
+      <text x={w / 2} y={tiled ? 40 : 16} textAnchor="middle" fill="#8b98a8" fontSize="11">N</text>
       {truthTrail ? <polyline points={truthTrail} fill="none" stroke="#81c784" strokeWidth="1.5" opacity="0.8" /> : null}
       {boardTrail ? <polyline points={boardTrail} fill="none" stroke="#4fc3f7" strokeWidth="1.5" opacity="0.55" /> : null}
+      {routePts && tiled ? <polyline points={routePts} fill="none" stroke="#101214" strokeWidth="3.6" strokeOpacity="0.6" strokeLinejoin="round" /> : null}
       {routePts ? <polyline points={routePts} fill="none" stroke="#e8eef4" strokeWidth="1.4" strokeDasharray="5 4" /> : null}
       {boardAt && truthAt && dist(board as LatLon, truth as LatLon) > 1 ? (
         <line x1={boardAt.x} y1={boardAt.y} x2={truthAt.x} y2={truthAt.y} stroke="#ef5350" strokeWidth="1.2" strokeDasharray="3 3" />
@@ -1076,10 +1713,14 @@ function MapArt({
       {boardAt && gpsAt && dist(board as LatLon, gps as LatLon) > 1 ? (
         <line x1={boardAt.x} y1={boardAt.y} x2={gpsAt.x} y2={gpsAt.y} stroke="#ffb74d" strokeWidth="1" strokeDasharray="2 3" />
       ) : null}
-      {home ? <HomeMark at={xy(home)} hot={wpSeq === 0 || (finish === "rtl" && wpSeq === points.length + 2)} /> : null}
+      {finish === "loiter" && !points.length && route[0] ? (
+        <circle cx={xy(route[0]).x} cy={xy(route[0]).y} r="13" fill="none" stroke="#ffb74d" strokeWidth="1.5" />
+      ) : null}
+      {marks}
+      {home ? <HomeMark at={xy(home)} hot={homeHot} /> : null}
       {points.map((p, i) => {
         const at = xy(p);
-        const hot = wpSeq === i + 2;
+        const hot = livePoint === i;
         const hold = finish === "loiter" && i === points.length - 1;
         return (
           <g key={i}>
@@ -1164,15 +1805,178 @@ function L1Marks({
       {leadR >= 6 ? (
         <circle cx={b.x} cy={b.y} r={leadR} fill="none" stroke="#8b98a8" strokeWidth="1" strokeDasharray="3 4" opacity="0.75" />
       ) : null}
-      <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#ffb74d" strokeWidth="2.4" strokeLinecap="round" opacity="0.9" />
+      {picture.circle ? (
+        <circle
+          cx={a.x}
+          cy={a.y}
+          r={Math.max(2, picture.circle.r / mpp)}
+          fill="none"
+          stroke="#ffb74d"
+          strokeWidth="2.4"
+          opacity="0.9"
+        />
+      ) : (
+        <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#ffb74d" strokeWidth="2.4" strokeLinecap="round" opacity="0.9" />
+      )}
       {foot ? (
         <line x1={at.x} y1={at.y} x2={foot.x} y2={foot.y} stroke="#ffb74d" strokeWidth="1" strokeDasharray="3 3" />
       ) : null}
-      {radius >= 3 ? (
+      {radius >= 3 && picture.phase !== "circle" ? (
         <circle cx={at.x} cy={at.y} r={radius} fill="none" stroke="#ffb74d" strokeWidth="1.3" strokeDasharray="5 4" />
       ) : null}
       <line x1={at.x} y1={at.y} x2={ref.x} y2={ref.y} stroke="#ffb74d" strokeWidth="1.6" />
       {picture.along ? <circle cx={ref.x} cy={ref.y} r="4.5" fill="#ffb74d" stroke="#101214" strokeWidth="1.2" /> : null}
+    </g>
+  );
+}
+
+// Point kinds, actions, jumps, ROI lines, distance gates and speed changes on the map.
+function MissionMarks({
+  plan,
+  origin,
+  vehicle,
+  tune,
+  e2t,
+  sel,
+  actState,
+  xy,
+  mpp,
+}: {
+  plan: Plan;
+  origin: LatLon;
+  vehicle: string;
+  tune: L1Tune;
+  e2t: number;
+  sel: number | null;
+  actState: (i: number, j: number) => ActState;
+  xy: (p: LatLon) => { x: number; y: number };
+  mpp: number;
+}) {
+  const t = useT();
+  const { points } = plan;
+  const loiterR = loiterRadius(loiterOf(0, tune).r, tune, e2t) / mpp;
+  const speedLegs: { a: LatLon; b: LatLon; v: number }[] = [];
+  let speed: number | null = null;
+  points.forEach((p, i) => {
+    for (const a of p.acts ?? []) if (a.kind === "speed") speed = a.a;
+    const next = i + 1 < points.length ? points[i + 1] : endsHome(plan) ? origin : null;
+    if (speed != null && next) speedLegs.push({ a: p, b: next, v: speed });
+  });
+  return (
+    <g className="mission-marks" pointerEvents="none">
+      <defs>
+        <marker id="mission-jump-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#ce93d8" />
+        </marker>
+      </defs>
+      {speedLegs.map((s, k) => {
+        const a = xy(s.a);
+        const b = xy(s.b);
+        return <line key={`v${k}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#4fc3f7" strokeWidth="5" strokeOpacity="0.28" strokeLinecap="round" />;
+      })}
+      {points.map((p, i) => {
+        const at = xy(p);
+        const kind = p.kind ?? "wp";
+        const acts = p.acts ?? [];
+        const out: ReactElement[] = [];
+        if (sel === i) out.push(<circle key="sel" cx={at.x} cy={at.y} r="10" fill="none" stroke="#4fc3f7" strokeWidth="1.5" />);
+        if (kind === "time" || kind === "turns") {
+          if (vehicle === "plane" && loiterR >= 4) {
+            out.push(<circle key="loit" cx={at.x} cy={at.y} r={loiterR} fill="none" stroke="#ffb74d" strokeWidth="1.2" strokeDasharray="4 4" opacity="0.8" />);
+          }
+          out.push(
+            <text key="hold" x={at.x} y={at.y + 18} textAnchor="middle" fill="#ffb74d" fontSize="10">
+              {kind === "time" ? t("{v} s", { v: p.hold ?? 0 }) : `×${p.hold ?? 0}`}
+            </text>,
+          );
+        }
+        if (kind === "land") {
+          out.push(<polygon key="land" points={`${at.x - 6},${at.y - 12} ${at.x + 6},${at.y - 12} ${at.x},${at.y - 4}`} fill="#ef9a9a" />);
+        }
+        acts.forEach((a, j) => {
+          const target = points[a.a];
+          if (a.kind === "jump" && target) {
+            const b = xy(target);
+            const mx = (at.x + b.x) / 2;
+            const my = (at.y + b.y) / 2;
+            const len = Math.hypot(b.x - at.x, b.y - at.y) || 1;
+            const bend = Math.max(30, len * 0.25);
+            const cx = mx + ((b.y - at.y) / len) * bend;
+            const cy = my - ((b.x - at.x) / len) * bend;
+            out.push(
+              <path
+                key={`j${j}`}
+                d={`M ${at.x} ${at.y} Q ${cx} ${cy} ${b.x} ${b.y}`}
+                fill="none"
+                stroke="#ce93d8"
+                strokeWidth="1.5"
+                strokeDasharray="6 3"
+                markerEnd="url(#mission-jump-arrow)"
+              />,
+              <text key={`jt${j}`} x={(at.x + 2 * cx + b.x) / 4} y={(at.y + 2 * cy + b.y) / 4} fill="#ce93d8" fontSize="11" textAnchor="middle">
+                {actBadge(a, t)}
+              </text>,
+            );
+          }
+          if (a.kind === "roi" && target) {
+            const b = xy(target);
+            out.push(<line key={`r${j}`} x1={at.x} y1={at.y} x2={b.x} y2={b.y} stroke="#80cbc4" strokeWidth="1" strokeDasharray="1 4" />);
+          }
+          if (a.kind === "distance") {
+            const next = nextAfter(plan, i, origin);
+            if (next) {
+              const leg = dist(p, next);
+              if (a.a < leg) {
+                const d = toEnu(next.lat, next.lon, p);
+                const k = (leg - a.a) / leg;
+                const g = xy(fromEnu(d.e * k, d.n * k, p));
+                const nb = xy(next);
+                const ux = (nb.x - at.x) / (Math.hypot(nb.x - at.x, nb.y - at.y) || 1);
+                const uy = (nb.y - at.y) / (Math.hypot(nb.x - at.x, nb.y - at.y) || 1);
+                out.push(
+                  <line key={`d${j}`} x1={g.x - uy * 7} y1={g.y + ux * 7} x2={g.x + uy * 7} y2={g.y - ux * 7} stroke="#ffb74d" strokeWidth="2" />,
+                  <text key={`dt${j}`} x={g.x + uy * 10} y={g.y - ux * 10} fill="#ffb74d" fontSize="10">
+                    {t("{v} m", { v: a.a })}
+                  </text>,
+                );
+              }
+            }
+          }
+        });
+        if (acts.length) {
+          const anchor = xy(actionAnchor(plan, i, origin, vehicle, tune, e2t));
+          if (Math.hypot(anchor.x - at.x, anchor.y - at.y) > 3) {
+            out.push(<circle key="anc" cx={anchor.x} cy={anchor.y} r="2.5" fill="#e8eef4" />);
+          }
+          const shown = acts.slice(0, 3);
+          let x = anchor.x + 8;
+          const y = anchor.y + 8;
+          shown.forEach((a, j) => {
+            const st = actState(i, j);
+            const text = st?.state === "wait" && st.left ? `${actBadge(a, t)} ${st.left}` : actBadge(a, t);
+            const w = text.length * 6.2 + 8;
+            const fill = st?.state === "done" ? "#1d2a22" : st?.state === "wait" ? "#3a2a10" : "#1b2530";
+            const ink = st?.state === "done" ? "#81c784" : st?.state === "wait" ? "#ffb74d" : ACTS[a.kind].cond ? "#b0bec5" : "#e8eef4";
+            out.push(
+              <g key={`b${j}`} className="mission-badge">
+                <rect x={x} y={y} width={w} height="15" rx="4" fill={fill} stroke={ink} strokeOpacity="0.5" />
+                <text x={x + 4} y={y + 11} fill={ink} fontSize="10">
+                  {text}
+                </text>
+              </g>,
+            );
+            x += w + 3;
+          });
+          if (acts.length > shown.length) {
+            out.push(
+              <text key="more" x={x + 2} y={y + 11} fill="#8b98a8" fontSize="10">
+                +{acts.length - shown.length}
+              </text>,
+            );
+          }
+        }
+        return <g key={i}>{out}</g>;
+      })}
     </g>
   );
 }

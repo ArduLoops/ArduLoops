@@ -400,6 +400,9 @@ fn drain_cmds(
                         Cmd::Mission { reply, .. } => {
                             let _ = reply.send("No link".into());
                         }
+                        Cmd::MissionRead { reply } => {
+                            let _ = reply.send(Err("No link".into()));
+                        }
                         _ => {}
                     }
                 }
@@ -592,6 +595,12 @@ pub fn run_loop(
             // Log bytes can crowd ATTITUDE off a slow serial link. That is not a dead port.
             if st.active_log_download.is_some() {
                 last_att = Some(now);
+            }
+            if std::mem::take(&mut st.after_quiet) {
+                last_att = Some(now);
+                log_rates_at = now;
+                intervals.replace(restore_interval_cmds());
+                restore_again = true;
             }
             let att_gone = if st.active_log_download.is_some() {
                 false

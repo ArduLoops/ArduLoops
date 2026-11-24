@@ -60,6 +60,8 @@ export type Sample = {
   truth_lon?: number | null;
   home_lat?: number | null;
   home_lon?: number | null;
+  /** HOME_POSITION altitude above sea level, metres (the bridge already sends it). */
+  home_alt_m?: number | null;
   /** MISSION_CURRENT sequence. Item 0 is home. */
   wp_seq?: number | null;
   /** NAV_CONTROLLER_OUTPUT distance to the active waypoint, metres. */

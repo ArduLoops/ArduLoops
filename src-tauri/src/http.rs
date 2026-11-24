@@ -271,12 +271,33 @@ fn handle(stream: TcpStream, latest: Arc<Mutex<Sample>>, tx: Sender<Cmd>) -> std
             &serde_json::to_vec(&serde_json::json!({"ok":ok,"message":message}))?);
     }
 
+    if method == "GET" && path == "/mission" {
+        let mut socket = reader.into_inner();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        if tx.send(Cmd::MissionRead { reply: result_tx }).is_err() {
+            return reply(
+                &mut socket,
+                503,
+                "application/json",
+                &serde_json::to_vec(&serde_json::json!({"ok": false, "message": "No link"}))?,
+            );
+        }
+        let result = result_rx
+            .recv_timeout(Duration::from_secs(180))
+            .unwrap_or_else(|_| Err("Mission download timed out".into()));
+        let (code, body) = match result {
+            Ok(items) => (200, serde_json::json!({"ok": true, "items": items})),
+            Err(message) => (409, serde_json::json!({"ok": false, "message": message})),
+        };
+        return reply(&mut socket, code, "application/json", &serde_json::to_vec(&body)?);
+    }
+
     if method == "POST" && path == "/mission" {
         let len = headers
             .get("content-length")
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(0)
-            .min(32_768);
+            .min(131_072);
         let mut body = vec![0u8; len];
         if len > 0 {
             reader.read_exact(&mut body)?;
@@ -1691,21 +1712,49 @@ struct MissionPost {
     items: Vec<MissionItem>,
 }
 
+/// Home, takeoff, 40 points with up to 8 actions each, and the finish.
+const MISSION_MAX_ITEMS: usize = 400;
+
 fn mission_items_ok(items: &[MissionItem]) -> Result<(), &'static str> {
-    if items.len() > 48 {
+    if items.len() > MISSION_MAX_ITEMS {
         return Err("Too many waypoints");
     }
+    let within = |v: f64, lo: f64, hi: f64| v.is_finite() && v >= lo && v <= hi;
     for item in items {
-        if !matches!(item.kind.as_str(), "waypoint" | "takeoff" | "rtl" | "loiter") {
+        let positioned = matches!(
+            item.kind.as_str(),
+            "waypoint" | "takeoff" | "loiter" | "loiter_time" | "loiter_turns" | "land" | "roi" | "land_start"
+        );
+        if !positioned && !matches!(
+            item.kind.as_str(),
+            "rtl" | "speed" | "servo" | "relay" | "cam_dist" | "jump" | "delay" | "distance" | "yaw"
+        ) {
             return Err("Bad mission");
         }
         if !item.lat.is_finite() || !item.lon.is_finite() || !item.alt.is_finite() {
             return Err("Bad mission");
         }
-        if item.kind != "rtl" && (item.lat.abs() > 90.0 || item.lon.abs() > 180.0) {
+        if positioned && (item.lat.abs() > 90.0 || item.lon.abs() > 180.0) {
             return Err("Bad mission");
         }
         if item.alt.abs() > 5000.0 {
+            return Err("Bad mission");
+        }
+        let ok = match item.kind.as_str() {
+            "loiter_time" => within(item.p1, 0.0, 3600.0),
+            "loiter_turns" => within(item.p1, 0.0, 100.0),
+            "speed" => within(item.p1, 0.0, 3.0) && within(item.p2, 0.5, 100.0),
+            "servo" => within(item.p1, 1.0, 32.0) && within(item.p2, 500.0, 2500.0),
+            "relay" => within(item.p1, 0.0, 15.0) && within(item.p2, 0.0, 1.0),
+            "cam_dist" => within(item.p1, 0.0, 1000.0),
+            // Target is an earlier item; repeats -1 is forever.
+            "jump" => within(item.p1, 1.0, items.len() as f64 - 1.0) && within(item.p2, -1.0, 100.0),
+            "delay" => within(item.p1, 0.0, 3600.0),
+            "distance" => within(item.p1, 0.0, 10_000.0),
+            "yaw" => within(item.p1, 0.0, 360.0),
+            _ => true,
+        };
+        if !ok {
             return Err("Bad mission");
         }
     }
@@ -1963,5 +2012,57 @@ mod diagnostics_tests {
         assert!(!bootloader_allowed(&s, 12.0));
         s.armed = false;
         assert!(!bootloader_allowed(&s, 14.0));
+    }
+}
+
+#[cfg(test)]
+mod mission_tests {
+    use super::*;
+
+    fn item(kind: &str, p1: f64, p2: f64) -> MissionItem {
+        MissionItem { kind: kind.into(), lat: -35.36, lon: 149.16, alt: 60.0, p1, p2, p3: 0.0, p4: 0.0 }
+    }
+
+    #[test]
+    fn actions_and_conditions_pass_inside_their_limits() {
+        let items = vec![
+            item("waypoint", 0.0, 0.0),
+            item("takeoff", 0.0, 0.0),
+            item("waypoint", 0.0, 0.0),
+            item("speed", 0.0, 18.0),
+            item("servo", 9.0, 1900.0),
+            item("relay", 0.0, 1.0),
+            item("cam_dist", 50.0, 0.0),
+            item("loiter_time", 20.0, 0.0),
+            item("delay", 5.0, 0.0),
+            item("distance", 250.0, 0.0),
+            item("jump", 2.0, 1.0),
+            item("loiter_turns", 2.0, 0.0),
+            item("roi", 0.0, 0.0),
+            item("yaw", 90.0, 0.0),
+            item("land_start", 0.0, 0.0),
+            item("land", 0.0, 0.0),
+            item("rtl", 0.0, 0.0),
+        ];
+        assert_eq!(mission_items_ok(&items), Ok(()));
+    }
+
+    #[test]
+    fn values_outside_the_limits_are_refused() {
+        let base = vec![item("waypoint", 0.0, 0.0), item("takeoff", 0.0, 0.0), item("waypoint", 0.0, 0.0)];
+        for bad in [
+            item("servo", 0.0, 1500.0),
+            item("servo", 9.0, 3000.0),
+            item("relay", 0.0, 2.0),
+            item("speed", 0.0, 0.0),
+            item("jump", 9.0, 1.0),
+            item("jump", 2.0, 500.0),
+            item("delay", -1.0, 0.0),
+            item("unknown", 0.0, 0.0),
+        ] {
+            let mut items = base.clone();
+            items.push(bad.clone());
+            assert_eq!(mission_items_ok(&items), Err("Bad mission"), "{}", bad.kind);
+        }
     }
 }

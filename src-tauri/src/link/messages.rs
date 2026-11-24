@@ -11,36 +11,42 @@ fn sim_deg(v: f32) -> f64 {
     if n.abs() > 180.0 { n / 1e7 } else { n }
 }
 
-fn mission_shape(item: &MissionItem) -> (MavCmd, bool, i32, i32, f32) {
-    match item.kind.as_str() {
-        "takeoff" => (
-            MavCmd::MAV_CMD_NAV_TAKEOFF,
-            false,
-            deg_e7(item.lat),
-            deg_e7(item.lon),
-            item.alt as f32,
-        ),
-        "loiter" => (
-            MavCmd::MAV_CMD_NAV_LOITER_UNLIM,
-            false,
-            deg_e7(item.lat),
-            deg_e7(item.lon),
-            item.alt as f32,
-        ),
-        "rtl" => (
-            MavCmd::MAV_CMD_NAV_RETURN_TO_LAUNCH,
-            true,
-            deg_e7(item.lat),
-            deg_e7(item.lon),
-            0.0,
-        ),
-        _ => (
-            MavCmd::MAV_CMD_NAV_WAYPOINT,
-            false,
-            deg_e7(item.lat),
-            deg_e7(item.lon),
-            item.alt as f32,
-        ),
+/// The MAVLink shape of one plan item: command, whether it is a MAV_FRAME_MISSION item
+/// (no position), x/y/z and param1..param4.
+///
+/// Navigation: `waypoint`, `takeoff`, `loiter` (unlimited), `loiter_time` (p1 s),
+/// `loiter_turns` (p1 turns), `land`, `rtl`.
+/// Actions: `speed` (p1 speed type, p2 m/s), `servo` (p1 channel, p2 PWM), `relay`
+/// (p1 relay, p2 0/1), `cam_dist` (p1 m), `jump` (p1 target item, p2 repeats), `roi`
+/// (a position), `land_start` (a position).
+/// Conditions: `delay` (p1 s), `distance` (p1 m to the next waypoint), `yaw` (p1 deg).
+fn mission_shape(item: &MissionItem) -> (MavCmd, bool, i32, i32, f32, [f32; 4]) {
+    let at = (deg_e7(item.lat), deg_e7(item.lon), item.alt as f32);
+    let p = [item.p1 as f32, item.p2 as f32, item.p3 as f32, item.p4 as f32];
+    let none = [0.0f32; 4];
+    let (cmd, mission_frame, params) = match item.kind.as_str() {
+        "takeoff" => (MavCmd::MAV_CMD_NAV_TAKEOFF, false, none),
+        "loiter" => (MavCmd::MAV_CMD_NAV_LOITER_UNLIM, false, none),
+        "loiter_time" => (MavCmd::MAV_CMD_NAV_LOITER_TIME, false, [p[0], 0.0, 0.0, 0.0]),
+        "loiter_turns" => (MavCmd::MAV_CMD_NAV_LOITER_TURNS, false, [p[0], 0.0, 0.0, 0.0]),
+        "land" => (MavCmd::MAV_CMD_NAV_LAND, false, none),
+        "rtl" => return (MavCmd::MAV_CMD_NAV_RETURN_TO_LAUNCH, true, at.0, at.1, 0.0, none),
+        "speed" => (MavCmd::MAV_CMD_DO_CHANGE_SPEED, true, [p[0], p[1], -1.0, 0.0]),
+        "servo" => (MavCmd::MAV_CMD_DO_SET_SERVO, true, [p[0], p[1], 0.0, 0.0]),
+        "relay" => (MavCmd::MAV_CMD_DO_SET_RELAY, true, [p[0], p[1], 0.0, 0.0]),
+        "cam_dist" => (MavCmd::MAV_CMD_DO_SET_CAM_TRIGG_DIST, true, [p[0], 0.0, 0.0, 0.0]),
+        "jump" => (MavCmd::MAV_CMD_DO_JUMP, true, [p[0], p[1], 0.0, 0.0]),
+        "roi" => (MavCmd::MAV_CMD_DO_SET_ROI, false, none),
+        "land_start" => (MavCmd::MAV_CMD_DO_LAND_START, false, none),
+        "delay" => (MavCmd::MAV_CMD_CONDITION_DELAY, true, [p[0], 0.0, 0.0, 0.0]),
+        "distance" => (MavCmd::MAV_CMD_CONDITION_DISTANCE, true, [p[0], 0.0, 0.0, 0.0]),
+        "yaw" => (MavCmd::MAV_CMD_CONDITION_YAW, true, [p[0], 0.0, 0.0, 0.0]),
+        _ => (MavCmd::MAV_CMD_NAV_WAYPOINT, false, none),
+    };
+    if mission_frame {
+        (cmd, true, 0, 0, 0.0, params)
+    } else {
+        (cmd, false, at.0, at.1, at.2, params)
     }
 }
 
@@ -48,7 +54,7 @@ fn mission_shape(item: &MissionItem) -> (MavCmd, bool, i32, i32, f32) {
 /// Always answer with MISSION_ITEM_INT. Item 0 is home, so its altitude is AMSL;
 /// a relative home is what makes Mission Planner refuse the plan.
 fn send_mission_item(conn: &dyn MavConnection<MavMessage>, st: &LinkState, item: &MissionItem, seq: u16) {
-    let (command, mission_frame, x, y, mut z) = mission_shape(item);
+    let (command, mission_frame, x, y, mut z, params) = mission_shape(item);
     let home = seq == 0 && command == MavCmd::MAV_CMD_NAV_WAYPOINT;
     let frame = if mission_frame {
         MavFrame::MAV_FRAME_MISSION
@@ -65,10 +71,10 @@ fn send_mission_item(conn: &dyn MavConnection<MavMessage>, st: &LinkState, item:
     send_msg(
         conn,
         &MavMessage::MISSION_ITEM_INT(MISSION_ITEM_INT_DATA {
-            param1: 0.0,
-            param2: 0.0,
-            param3: 0.0,
-            param4: 0.0,
+            param1: params[0],
+            param2: params[1],
+            param3: params[2],
+            param4: params[3],
             x,
             y,
             z,
@@ -113,6 +119,7 @@ fn upload_mission(
         );
     }
     let deadline = Instant::now() + Duration::from_secs(8);
+    let mut emitted_at = Instant::now();
     while Instant::now() < deadline {
         match conn.recv() {
             Ok((hdr, msg)) => {
@@ -126,7 +133,10 @@ fn upload_mission(
                     _ => None,
                 };
                 handle_msg(st, &hdr, msg);
-                emit_sample(on_sample, latest, st, sitl);
+                if emitted_at.elapsed() >= Duration::from_millis(100) {
+                    emit_sample(on_sample, latest, st, sitl);
+                    emitted_at = Instant::now();
+                }
                 if let Some(seq) = request {
                     let Some(item) = items.get(seq as usize) else {
                         return "Mission rejected".into();
@@ -150,6 +160,116 @@ fn upload_mission(
         }
     }
     "Mission upload timed out".into()
+}
+
+/// MISSION_REQUEST_LIST, then each item with MISSION_REQUEST_INT, then MISSION_ACK.
+fn read_mission(
+    conn: &dyn MavConnection<MavMessage>,
+    st: &mut LinkState,
+    on_sample: &OnSample,
+    latest: &Mutex<Sample>,
+    sitl: &SitlCtl,
+) -> Result<Vec<BoardItem>, String> {
+    fn request(conn: &dyn MavConnection<MavMessage>, st: &LinkState, seq: Option<u16>) {
+        let msg = match seq {
+            None => MavMessage::MISSION_REQUEST_LIST(MISSION_REQUEST_LIST_DATA {
+                target_system: st.target_system,
+                target_component: st.target_component,
+                ..Default::default()
+            }),
+            Some(seq) => MavMessage::MISSION_REQUEST_INT(MISSION_REQUEST_INT_DATA {
+                seq,
+                target_system: st.target_system,
+                target_component: st.target_component,
+                ..Default::default()
+            }),
+        };
+        send_msg(conn, &msg);
+    }
+    // Like a log download: the live streams leave mission replies seconds behind on a
+    // busy link, so hold them at the quiet rates until the mission is in.
+    let mut quiet: std::collections::VecDeque<(f32, f32)> = quiet_interval_cmds().into();
+    let mut quiet_at = Instant::now() - INTERVAL_GAP;
+    st.after_quiet = true;
+    request(conn, st, None);
+    let mut count: Option<u16> = None;
+    let mut items: Vec<BoardItem> = Vec::new();
+    let mut asked_at = Instant::now();
+    let mut emitted_at = Instant::now();
+    // The telemetry streams keep the link busy, so a reply can take seconds. Asking again
+    // too soon only queues duplicate replies ahead of the one we need.
+    let started = Instant::now();
+    let mut deadline = started + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        if !quiet.is_empty() && quiet_at.elapsed() >= INTERVAL_GAP {
+            if let Some((mid, us)) = quiet.pop_front() {
+                command_long(conn, st.target_system, st.target_component, MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL, mid, us);
+            }
+            quiet_at = Instant::now();
+        }
+        match conn.recv() {
+            Ok((hdr, msg)) => {
+                let mut got = false;
+                match &msg {
+                    MavMessage::MISSION_COUNT(v) if hdr.system_id as u32 == st.target_system as u32 && count.is_none() => {
+                        count = Some(v.count);
+                        deadline = started + Duration::from_secs(15 + 3 * v.count as u64).min(Duration::from_secs(170));
+                        got = true;
+                    }
+                    MavMessage::MISSION_ITEM_INT(v)
+                        if hdr.system_id as u32 == st.target_system as u32 && count.is_some() && v.seq as usize == items.len() =>
+                    {
+                        items.push(BoardItem {
+                            seq: v.seq,
+                            cmd: v.command as u32,
+                            frame: v.frame as u32,
+                            p1: v.param1,
+                            p2: v.param2,
+                            p3: v.param3,
+                            p4: v.param4,
+                            lat: v.x as f64 / 1e7,
+                            lon: v.y as f64 / 1e7,
+                            alt: v.z,
+                        });
+                        got = true;
+                    }
+                    _ => {}
+                }
+                handle_msg(st, &hdr, msg);
+                // A full sample per message is slower than the link: replies would queue
+                // behind unread telemetry. Ten a second keeps the screen alive.
+                if emitted_at.elapsed() >= Duration::from_millis(100) {
+                    emit_sample(on_sample, latest, st, sitl);
+                    emitted_at = Instant::now();
+                }
+                if got {
+                    if items.len() as u16 >= count.unwrap_or(0) {
+                        send_msg(
+                            conn,
+                            &MavMessage::MISSION_ACK(MISSION_ACK_DATA {
+                                target_system: st.target_system,
+                                target_component: st.target_component,
+                                mavtype: MavMissionResult::MAV_MISSION_ACCEPTED,
+                                ..Default::default()
+                            }),
+                        );
+                        return Ok(items);
+                    }
+                    request(conn, st, Some(items.len() as u16));
+                    asked_at = Instant::now();
+                }
+            }
+            Err(mavlink::error::MessageReadError::Io(e))
+                if e.kind() == std::io::ErrorKind::TimedOut || e.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(_) => return Err("Connection lost during mission download".into()),
+        }
+        // A request or its reply can still drop: ask again after a quiet spell.
+        if asked_at.elapsed() > Duration::from_millis(1000) {
+            request(conn, st, count.map(|_| items.len() as u16));
+            asked_at = Instant::now();
+        }
+    }
+    Err("Mission download timed out".into())
 }
 
 fn apply_cmd(
@@ -447,6 +567,10 @@ fn apply_cmd(
         Cmd::Tune { p, i, d } => set_rate_pid(conn, st, p, i, d, None),
         Cmd::Mission { items, reply } => {
             let result = upload_mission(conn, st, &items, on_sample, latest, sitl);
+            let _ = reply.send(result);
+        }
+        Cmd::MissionRead { reply } => {
+            let result = read_mission(conn, st, on_sample, latest, sitl);
             let _ = reply.send(result);
         }
         Cmd::Mode { mode } => {

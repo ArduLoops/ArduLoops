@@ -441,12 +441,36 @@ impl Sample {
 }
 
 /// One item in a mission upload. Item 0 is home and is written as absolute altitude.
+/// `p1`..`p4` are the command's param1..param4 (see `mission_shape`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct MissionItem {
     pub kind: String,
     pub lat: f64,
     pub lon: f64,
     pub alt: f64,
+    #[serde(default)]
+    pub p1: f64,
+    #[serde(default)]
+    pub p2: f64,
+    #[serde(default)]
+    pub p3: f64,
+    #[serde(default)]
+    pub p4: f64,
+}
+
+/// One item read back from the vehicle, as MISSION_ITEM_INT carries it.
+#[derive(Debug, Clone, Serialize)]
+pub struct BoardItem {
+    pub seq: u16,
+    pub cmd: u32,
+    pub frame: u32,
+    pub p1: f32,
+    pub p2: f32,
+    pub p3: f32,
+    pub p4: f32,
+    pub lat: f64,
+    pub lon: f64,
+    pub alt: f32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -510,6 +534,11 @@ pub enum Cmd {
     Mission {
         items: Vec<MissionItem>,
         reply: std::sync::mpsc::Sender<String>,
+    },
+    /// Read the vehicle's mission back. Not a JSON command.
+    #[serde(skip)]
+    MissionRead {
+        reply: std::sync::mpsc::Sender<Result<Vec<BoardItem>, String>>,
     },
     #[serde(rename = "arm")]
     Arm { on: bool },
@@ -664,6 +693,9 @@ struct LinkState {
     target_system: u8,
     target_component: u8,
     active_log_download: Option<ActiveLogDownload>,
+    /// A blocking exchange (mission download) quieted the streams and held the loop:
+    /// the session restores the live rates and does not count the gap as lost ATTITUDE.
+    after_quiet: bool,
     params_cached_at: f64,
     params_cache_full: bool,
     params_cache_key: String,
@@ -715,6 +747,7 @@ impl LinkState {
             target_system: 1,
             target_component: 1,
             active_log_download: None,
+            after_quiet: false,
             params_cached_at: 0.0,
             params_cache_full: false,
             params_cache_key: String::new(),

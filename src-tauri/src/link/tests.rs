@@ -963,3 +963,40 @@ mod log_dir_tests {
         assert_eq!(log_dir_key(&st), "system-1");
     }
 }
+
+#[cfg(test)]
+mod mission_shape_tests {
+    use super::*;
+
+    fn item(kind: &str, p1: f64, p2: f64) -> MissionItem {
+        MissionItem { kind: kind.into(), lat: -35.36, lon: 149.16, alt: 60.0, p1, p2, p3: 0.0, p4: 0.0 }
+    }
+
+    #[test]
+    fn actions_carry_their_params_and_no_position() {
+        let (cmd, mission_frame, x, y, z, p) = mission_shape(&item("servo", 9.0, 1900.0));
+        assert_eq!(cmd, MavCmd::MAV_CMD_DO_SET_SERVO);
+        assert!(mission_frame);
+        assert_eq!((x, y, z), (0, 0, 0.0));
+        assert_eq!(p, [9.0, 1900.0, 0.0, 0.0]);
+        let (cmd, _, _, _, _, p) = mission_shape(&item("speed", 0.0, 18.0));
+        assert_eq!(cmd, MavCmd::MAV_CMD_DO_CHANGE_SPEED);
+        assert_eq!(p, [0.0, 18.0, -1.0, 0.0]);
+        let (cmd, _, _, _, _, p) = mission_shape(&item("jump", 5.0, 1.0));
+        assert_eq!(cmd, MavCmd::MAV_CMD_DO_JUMP);
+        assert_eq!(p, [5.0, 1.0, 0.0, 0.0]);
+        assert_eq!(mission_shape(&item("distance", 250.0, 0.0)).0, MavCmd::MAV_CMD_CONDITION_DISTANCE);
+    }
+
+    #[test]
+    fn loiter_points_keep_their_position_and_hold() {
+        let (cmd, mission_frame, x, y, z, p) = mission_shape(&item("loiter_time", 20.0, 0.0));
+        assert_eq!(cmd, MavCmd::MAV_CMD_NAV_LOITER_TIME);
+        assert!(!mission_frame);
+        assert_eq!((x, y, z), (deg_e7(-35.36), deg_e7(149.16), 60.0));
+        assert_eq!(p[0], 20.0);
+        assert_eq!(mission_shape(&item("loiter_turns", 2.0, 0.0)).0, MavCmd::MAV_CMD_NAV_LOITER_TURNS);
+        assert_eq!(mission_shape(&item("land", 0.0, 0.0)).0, MavCmd::MAV_CMD_NAV_LAND);
+        assert_eq!(mission_shape(&item("roi", 0.0, 0.0)).0, MavCmd::MAV_CMD_DO_SET_ROI);
+    }
+}
