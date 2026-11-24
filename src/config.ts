@@ -22,6 +22,12 @@ export const CLOUD_ACCOUNT_URL = `${CLOUD_AUTH_ORIGIN}/account`;
 /** Support packs, monthly support, and AI credits in the cabinet */
 export const CLOUD_PLANS_URL = `${CLOUD_AUTH_ORIGIN}/me#plans`;
 
+/**
+ * The Android app is installed from Google Play, which does not allow a link to pay outside Play for
+ * something used in the app (AI credits). It links to the cabinet overview only and names no support.
+ */
+export const IS_ANDROID = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+
 /** Mobile custom-scheme callback for OAuth */
 export const AUTH_CALLBACK_MOBILE = "arduloops://auth";
 

@@ -60,7 +60,8 @@ const body = md
   })
   .join("\n");
 const repo = process.env.GITHUB_REPOSITORY || "ArduLoops/ArduLoops";
-const links = `⬇️ <a href="https://github.com/${repo}/releases/tag/${tag}">Завантажити ${tag}</a> · <a href="https://arduloops.web.app/">Сайт</a>`;
+// Support is the last link and the only mention of it in the post (owner, 2026-11-24).
+const links = `⬇️ <a href="https://github.com/${repo}/releases/tag/${tag}">Завантажити ${tag}</a> · <a href="https://arduloops.web.app/">Сайт</a> · <a href="https://arduloops.web.app/support">♥ Підтримати</a>`;
 const full = `${body}\n\n${links}`;
 
 // Telegram counts the text after HTML parsing, in UTF-16 code units.

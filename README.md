@@ -37,6 +37,8 @@ The start page itself is [`docs/start.md`](docs/start.md) (English) and [`docs/s
 
 QuadPlane, an autoland flare, a full harmonic-notch wizard, and Autotune as a procedure are outside this app. When the wiki and the stand disagree, follow the wiki.
 
+ArduLoops is free. If it helps you, you can [support the project](https://arduloops.web.app/support).
+
 ## Run
 
 You need [Node.js](https://nodejs.org/) and [Rust](https://rustup.rs/).

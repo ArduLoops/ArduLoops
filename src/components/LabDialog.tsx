@@ -11,7 +11,7 @@ import { ai, type AiAccount, type AiStatus } from "../assistant/api";
 import { openExternal } from "../lib/open";
 import { APP_HTTP } from "../mav/link";
 import { PLOT_SPANS, getPlotSpan, setPlotSpan, type PlotSpan } from "../mav/store";
-import { CLOUD_ACCOUNT_URL, CLOUD_PLANS_URL, defaultLoginUrl } from "../config";
+import { CLOUD_ACCOUNT_URL, CLOUD_PLANS_URL, IS_ANDROID, defaultLoginUrl } from "../config";
 
 const KEY_PAGES: Record<string, string> = {
   gemini: "https://aistudio.google.com/apikey",
@@ -279,11 +279,11 @@ export function LabDialog({
                       {" / "}
                       <a
                         className="cabinet-link"
-                        href={CLOUD_PLANS_URL}
-                        title={t("Support ArduLoops and AI credits")}
+                        href={IS_ANDROID ? CLOUD_ACCOUNT_URL : CLOUD_PLANS_URL}
+                        title={IS_ANDROID ? t("Account") : t("Support ArduLoops and AI credits")}
                         onClick={(ev) => {
                           ev.preventDefault();
-                          openExternal(CLOUD_PLANS_URL);
+                          openExternal(IS_ANDROID ? CLOUD_ACCOUNT_URL : CLOUD_PLANS_URL);
                         }}
                       >
                         {account.supporter || account.plan === "supporter" ? "♥ " : ""}{t(planLabel(account))}

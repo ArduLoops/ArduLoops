@@ -18,12 +18,12 @@ Use this shape:
 - **<feature>**  - <description>
 - **<feature>**  - <description>
 
-[Website](https://arduloops.web.app/) · [GitHub](https://github.com/ArduLoops) · [Telegram](https://t.me/ArduLoops) · [YouTube](https://www.youtube.com/@ArduLoops)
+[Website](https://arduloops.web.app/) · [GitHub](https://github.com/ArduLoops) · [Telegram](https://t.me/ArduLoops) · [YouTube](https://www.youtube.com/@ArduLoops) · [♥ Support](https://arduloops.web.app/support)
 
 Questions, feedback, and suggestions: [open an issue](https://github.com/ArduLoops/ArduLoops/issues/new).
 ```
 
-The links line is the same in every release. GitHub links the organisation, not one repository.
+The links line is the same in every release. GitHub links the organisation, not one repository. Support is the last link and the only mention of it: no request in the summary or the bullets (owner, 2026-11-24).
 
 The summary is one or two short sentences. Each bullet is one feature. The description uses ASD-STE100: short sentences, one idea each, simple verbs, no marketing, no extra detail.
 
