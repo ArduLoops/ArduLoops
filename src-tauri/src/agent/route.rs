@@ -73,7 +73,7 @@ pub fn route(
             Ok(status(&c))
         }
         ("POST", "/ai/checkout") => {
-            let plan = body["plan"].as_str().unwrap_or("start");
+            let plan = body["plan"].as_str().unwrap_or("supporter");
             let url = checkout_url(plan).map_err(|e| (502, e))?;
             Ok(json!({"url": url}))
         }

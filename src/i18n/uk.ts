@@ -216,6 +216,8 @@ export const uk: Record<string, string> = {
   "{left} of {limit} requests left today.": "Сьогодні лишилось {left} з {limit}.",
   "{n} AI credits left.": "Залишилось AI-кредитів: {n}.",
   "Plans and AI credits": "Плани й AI-кредити",
+  "Support ArduLoops and AI credits": "Підтримати ArduLoops і AI-кредити",
+  "Supporter": "Підтримує проєкт",
   "Sign in with Google": "Увійти через Google",
   "Complete sign-in in the browser.": "Завершіть вхід у браузері.",
   "Sign out": "Вийти",

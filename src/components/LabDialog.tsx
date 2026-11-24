@@ -2,10 +2,9 @@ import "./LabDialog.css";
 import { useEffect, useState, type ReactNode } from "react";
 import { type Lang, useT, useLang, setLang } from "../i18n/i18n";
 
-/** The Cloud plan as the Options dialog names it. */
-function planLabel(plan: string | undefined): string {
-  if (plan === "start") return "Start";
-  if (plan === "plus") return "Plus";
+/** The Cloud plan as the Options dialog names it. Big and Biggest support packs also earn the badge. */
+function planLabel(account: { plan?: string; supporter?: boolean }): string {
+  if (account.supporter || account.plan === "supporter") return "Supporter";
   return "Free";
 }
 import { ai, type AiAccount, type AiStatus } from "../assistant/api";
@@ -281,13 +280,13 @@ export function LabDialog({
                       <a
                         className="cabinet-link"
                         href={CLOUD_PLANS_URL}
-                        title={t("Plans and AI credits")}
+                        title={t("Support ArduLoops and AI credits")}
                         onClick={(ev) => {
                           ev.preventDefault();
                           openExternal(CLOUD_PLANS_URL);
                         }}
                       >
-                        {t(planLabel(account.plan))}
+                        {account.supporter || account.plan === "supporter" ? "♥ " : ""}{t(planLabel(account))}
                       </a>
                     </>
                   ) : null}

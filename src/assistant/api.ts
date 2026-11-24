@@ -6,6 +6,8 @@ export type AiAccount = {
   signed_in: boolean;
   email?: string;
   plan?: string;
+  /** Bought a Big or Biggest support pack, or supports monthly. */
+  supporter?: boolean;
   used?: number | null;
   limit?: number | null;
   /** AI credits (one cent of model spend each). left is what this period, rollover, and bought credits leave. */
@@ -198,7 +200,7 @@ export const ai = {
   loginUrl: () => json<{ url: string }>("/ai/login", { method: "POST", body: "{}" }),
   cabinet: () => json<{ url: string }>("/ai/cabinet", { method: "POST", body: "{}" }),
   logout: () => json<AiStatus>("/ai/logout", { method: "POST", body: "{}" }),
-  checkout: (plan: "start" | "plus") => json<{ url: string }>("/ai/checkout", { method: "POST", body: JSON.stringify({ plan }) }),
+  checkout: (plan: "supporter") => json<{ url: string }>("/ai/checkout", { method: "POST", body: JSON.stringify({ plan }) }),
   portal: () => json<{ url: string }>("/ai/portal", { method: "POST", body: "{}" }),
   doc: (doc: { id?: string; url?: string }) => json<CloudDoc>("/ai/doc", { method: "POST", body: JSON.stringify(doc) }),
   shareDoc: (doc: { id?: string; url?: string }) => json<{ id: string; shared: boolean; views?: number; url?: string }>("/ai/doc/share", { method: "POST", body: JSON.stringify(doc) }),
