@@ -2,10 +2,10 @@
 // Sends the release post to the Telegram group: release/telegram/post.jpg with post.md as
 // the caption (see .cursor/rules/release-notes.mdc).
 //
-//   node scripts/telegram-release.mjs [--tag 2.7.0] [--dry-run]
+//   node scripts/telegram-release.mjs [--tag 2.7.0] [--dry-run] [--force]
 //
 // Needs TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. Without them, or with --dry-run, it only prints
-// the caption as Telegram will get it.
+// the caption as Telegram will get it. With GITHUB_TOKEN it sends one post per version (see below).
 
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -85,10 +85,39 @@ if (process.argv.includes("--dry-run") || !token || !chatId) {
   process.exit(0);
 }
 
+// One post per version. Before it sends, the script creates the ref refs/telegram/<tag>. GitHub
+// creates a ref only once, so a re-run (a job re-run pulls this job in again) sees 422 and stops.
+// The ref is deleted if the send fails. --force sends again; an existing ref is then kept.
+const ghToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+const lockRef = `telegram/${tag}`;
+async function gh(method, path, body) {
+  return fetch(`https://api.github.com/repos/${repo}/${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${ghToken}`, Accept: "application/vnd.github+json", "Content-Type": "application/json" },
+    body: body && JSON.stringify(body),
+  });
+}
+let locked = false;
+if (!ghToken) {
+  if (process.env.GITHUB_ACTIONS) fail("no GITHUB_TOKEN, so a re-run could post twice");
+  console.log("telegram-release: no GITHUB_TOKEN, the one-post check is skipped");
+} else {
+  const sha = execSync("git rev-parse HEAD", { cwd: root }).toString().trim();
+  const res = await gh("POST", "git/refs", { ref: `refs/${lockRef}`, sha });
+  if (res.status === 201) locked = true;
+  else if (res.status === 422 && !process.argv.includes("--force")) {
+    console.log(`telegram-release: ${tag} is already posted (refs/${lockRef}), nothing sent. Use --force to post again.`);
+    process.exit(0);
+  } else if (res.status !== 422) fail(`cannot create refs/${lockRef}: ${res.status} ${await res.text()}`);
+}
+
 async function tg(method, body) {
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: "POST", body });
   const json = await res.json().catch(() => ({}));
-  if (!json.ok) fail(`${method} failed: ${json.description || res.status}`);
+  if (!json.ok) {
+    if (locked && method === "sendPhoto") await gh("DELETE", `git/refs/${lockRef}`);
+    fail(`${method} failed: ${json.description || res.status}`);
+  }
   return json.result;
 }
 

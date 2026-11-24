@@ -3,6 +3,8 @@ name: Telegram post
 # Sends release/telegram/post.jpg with post.md as the caption to the community Telegram group.
 # release.yml calls it after the desktop installers are on the release. Run it by hand to retry a post.
 # Secrets: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID. Without them the job only prints the caption.
+# One post per version: the script creates refs/telegram/<tag> before it sends, and a re-run of
+# the release (which pulls this job in again) finds the ref and sends nothing. `force` posts again.
 
 on:
   workflow_call:
@@ -24,9 +26,13 @@ on:
         description: Print the caption only, do not send
         type: boolean
         default: true
+      force:
+        description: Post again although this version is already posted
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write # creates refs/telegram/<tag>
 
 jobs:
   post:
@@ -42,4 +48,5 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: node scripts/telegram-release.mjs --tag "${{ inputs.tag }}" ${{ inputs.dry_run && '--dry-run' || '' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/telegram-release.mjs --tag "${{ inputs.tag }}" ${{ inputs.dry_run && '--dry-run' || '' }} ${{ inputs.force && '--force' || '' }}
