@@ -5,25 +5,33 @@ fn read_id(id: &str) -> Result<Vec<u8>, String> {
     fs::read(resolve(id)?).map_err(|e| e.to_string())
 }
 
+/// Reads FMT records at record boundaries. A record of a type already defined is stepped over
+/// by its length, so header bytes inside its payload never redefine a type. The scan moves one
+/// byte at a time only where the type is not known yet, as the record walkers do.
 fn parse_formats(bytes: &[u8]) -> BTreeMap<u8, Fmt> {
-    let mut formats = BTreeMap::new();
+    let mut formats: BTreeMap<u8, Fmt> = BTreeMap::new();
     let mut i = 0;
     while i + 3 < bytes.len() {
         if bytes[i] != HEAD1 || bytes[i + 1] != HEAD2 {
             i += 1;
             continue;
         }
-        if bytes[i + 2] != FMT_TYPE {
-            i += 1;
+        let kind = bytes[i + 2];
+        if kind == FMT_TYPE {
+            if let Some(fmt) = decode_fmt(&bytes[i..]) {
+                let key = fmt_type_byte(&bytes[i..]);
+                formats.insert(key, fmt);
+                i += 89;
+                continue;
+            }
+        } else if let Some(fmt) = formats.get(&kind) {
+            if i + fmt.length > bytes.len() {
+                break;
+            }
+            i += fmt.length;
             continue;
         }
-        if let Some(fmt) = decode_fmt(&bytes[i..]) {
-            let key = fmt_type_byte(&bytes[i..]);
-            formats.insert(key, fmt);
-            i += 89;
-        } else {
-            i += 1;
-        }
+        i += 1;
     }
     formats
 }
